@@ -15,6 +15,9 @@
   "private": true,
   "type": "module",
   "main": "main.mjs",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "electron .",
     "serve": "node src/server.mjs",
@@ -22,7 +25,9 @@
     "pack": "electron-packager . \"Motion Studio\" --platform=win32 --arch=x64 --out=dist --overwrite --icon=resources/icon.ico --ignore=^/dist --ignore=^/scripts --ignore=^/docs --ignore=^/.git --ignore=^/.claude --no-asar",
     "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1",
     "sign:cert": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-selfsigned-cert.ps1",
-    "dist": "npm run pack && npm run sign"
+    "dist": "npm run pack && npm run sign",
+    "test": "node --test \"test/*.test.mjs\"",
+    "check": "node scripts/check.mjs"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",

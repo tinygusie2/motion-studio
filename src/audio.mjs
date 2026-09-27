@@ -3,7 +3,11 @@
 // preview player evaluates the same points, so what plays in the editor is what the render mixes.
 // Pure module: used by the template and served to the editor UI at /lib/audio.mjs.
 
-export const musicDefaults = { start: 0, media: 0, vol: 0.35, fadeIn: 0.5, fadeOut: 1.5, duck: 0.3 };
+export const musicDefaults = { start: 0, media: 0, vol: 0.35, fadeIn: 0.5, fadeOut: 1.5, duck: 0.3, carve: 0.5 };
+// Voice carve: while the voice speaks, the bed also dips in the bands speech needs (on top of the duck), so the
+// music can stay louder and fuller. [frequency Hz, q, share of the deepest cut]; the deepest cut is CARVE_DB × carve.
+export const CARVE_BANDS = [[800, 1.4, 0.6], [1600, 1.4, 1], [3000, 1.4, 0.7]];
+const CARVE_DB = 12;
 const ATTACK = 0.25, RELEASE = 0.6, MERGE_GAP = 0.7;
 
 // When the voice is speaking, in video time: voice-over lines with a known length, merged across short pauses.
@@ -26,15 +30,15 @@ export function musicMix(v) {
   const start = Math.max(0, +m.start || 0);
   const dur = Math.max(0.1, Math.min(m.dur ?? Infinity, DUR - start));
   const duck = Math.min(1, Math.max(0, +m.duck));
-  const spans = v.audio && duck < 1 ? speechSpans(v).map(([a, b]) => [a - start, b - start]).filter(([a, b]) => b > 0 && a < dur) : [];
-  const duckAt = t => {
-    let g = 1;
-    for (const [a, b] of spans) {
-      const d = t >= a && t <= b ? 1 : t < a && t > a - ATTACK ? (t - (a - ATTACK)) / ATTACK : t > b && t < b + RELEASE ? 1 - (t - b) / RELEASE : 0;
-      g = Math.min(g, 1 - d * (1 - duck));
-    }
-    return g;
+  const carve = Math.min(1, Math.max(0, +m.carve || 0));
+  const spans = v.audio && (duck < 1 || carve > 0) ? speechSpans(v).map(([a, b]) => [a - start, b - start]).filter(([a, b]) => b > 0 && a < dur) : [];
+  // 0..1: how much the voice is speaking at t (ramps in before a line, eases out after it).
+  const speakAt = t => {
+    let d = 0;
+    for (const [a, b] of spans) d = Math.max(d, t >= a && t <= b ? 1 : t < a && t > a - ATTACK ? (t - (a - ATTACK)) / ATTACK : t > b && t < b + RELEASE ? 1 - (t - b) / RELEASE : 0);
+    return d;
   };
+  const duckAt = t => 1 - speakAt(t) * (1 - duck);
   const fadeAt = t => Math.max(0, Math.min(1, m.fadeIn > 0 ? t / m.fadeIn : 1, m.fadeOut > 0 ? (dur - t) / m.fadeOut : 1));
   const gain = t => Math.min(1, Math.max(0, +m.vol)) * fadeAt(t) * duckAt(t);
   const ts = new Set([0, +dur.toFixed(3)]);
@@ -44,8 +48,14 @@ export function musicMix(v) {
   add(m.fadeIn);
   for (let x = 0; x < m.fadeOut; x += 0.1) add(dur - x);
   add(dur - m.fadeOut);
-  const points = [...ts].sort((a, b) => a - b).slice(0, 512).map(t => ({ t, v: +gain(t).toFixed(4) }));
-  return { src: m.src, start: +start.toFixed(3), dur: +dur.toFixed(3), media: Math.max(0, +m.media || 0), points };
+  const times = [...ts].sort((a, b) => a - b).slice(0, 512);
+  const points = times.map(t => ({ t, v: +gain(t).toFixed(4) }));
+  // The carve: a HyperFrames fx chain of peaking filters plus one gain lane per filter (dB, clip-local).
+  const fx = carve > 0 && spans.length ? {
+    chain: { version: 1, nodes: CARVE_BANDS.map(([f, q], i) => ({ type: 'peaking', id: `carve${i + 1}`, label: `Voice carve ${f} Hz`, params: { frequency: f, gain: 0, q } })) },
+    lanes: CARVE_BANDS.map(([, , share], i) => ({ target: `fx.carve${i + 1}.gain`, points: times.map(t => ({ t, v: +(-CARVE_DB * carve * share * speakAt(t)).toFixed(2) })) }))
+  } : null;
+  return { src: m.src, start: +start.toFixed(3), dur: +dur.toFixed(3), media: Math.max(0, +m.media || 0), points, fx };
 }
 
 // Linear between points, first/last value held (the HyperFrames lane rule).

@@ -8,6 +8,7 @@
 music, rendered to MP4 for TikTok, Reels, Shorts, LinkedIn and YouTube.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-b8c7ff.svg)](LICENSE)
+[![CI](https://github.com/tinygusie2/motion-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/tinygusie2/motion-studio/actions/workflows/ci.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-c1ec8a.svg)](CONTRIBUTING.md)
 [![Good first issues](https://img.shields.io/github/issues/tinygusie2/motion-studio/good%20first%20issue?color=ffb77d&label=good%20first%20issues)](https://github.com/tinygusie2/motion-studio/issues?q=is%3Aopen+label%3A%22good+first+issue%22)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-d7baff.svg)
@@ -35,10 +36,12 @@ tablet, browser window or full screen) and animates everything around them:
 - **Callouts** with icons, counters and a live dot, dragged into place on the preview
 - **Zooms** onto a point you click, and **taps / clicks** that show where to look
 - **Captions** in four styles (pop, karaoke, block, classic), made from the voice-over or imported from `.srt`/`.vtt`
-- **Voice-over** from text (Kokoro / Piper TTS), plus a **music bed** that fades and ducks under the voice
+- **Voice-over** from text (Kokoro / Piper TTS), plus a **music bed** that fades, ducks under the voice and
+  carves an EQ pocket for it, so speech stays clear while the music stays full
 - **Beat detection**: snap cuts and callouts to the music
 - **Brands**: logo, font, colors and end card, set once and used by every video
-- **Four formats from one edit**: 9:16, 4:5, 1:1 and 16:9, each laid out on its own
+- **Four formats from one edit**: 9:16, 4:5, 1:1 and 16:9, each laid out on its own, with per-format positions
+  for callouts and captions when a format needs them
 - **Batch render** of many videos in one go, with an `.srt` next to every MP4
 
 <p align="center"><img src="docs/formats.png" alt="The same video in 9:16, 4:5 and 16:9" /></p>
@@ -56,7 +59,7 @@ video. The preview in the editor *is* the composition that gets rendered, so wha
 
 ## Getting started
 
-You need [Node.js](https://nodejs.org) 20+ and [ffmpeg](https://ffmpeg.org) on your `PATH`. Voice-over is
+You need [Node.js](https://nodejs.org) 22+ and [ffmpeg](https://ffmpeg.org) on your `PATH`. Voice-over is
 optional and needs a Python with [Kokoro](https://github.com/hexgrad/kokoro) (English, via `hyperframes tts`)
 and/or [Piper](https://github.com/rhasspy/piper) (Dutch voices); set the paths under *Bestand → Instellingen*.
 
@@ -73,6 +76,7 @@ On first start, create a project folder (*Nieuw project…*), drop a screen reco
 | Command | What it does |
 | --- | --- |
 | `npm start` | Run the app from source (Electron) |
+| `npm test` / `npm run check` | Run the tests / syntax-check every script (both run in CI on every pull request) |
 | `npm run serve` | Run the editor in your normal browser at http://localhost:3400, which is handy for development |
 | `npm run pack` | Build `dist/Motion Studio-win32-x64/Motion Studio.exe` |
 | `npm run sign` | Sign that `.exe` (see [signing](#signing-on-windows)) |
@@ -98,10 +102,9 @@ Everything below is open for grabs. Comment on (or open) an issue so others know
 **Bigger features**
 - 🍎 **macOS and Linux builds**: the code is cross-platform, but packaging and testing aren't there yet
 - 🎙️ **Exact word timing** for captions with Whisper (`hyperframes transcribe`) instead of estimates
-- 🎚️ **Voice carve**: EQ room for the voice in the music instead of only turning it down
-- 📐 **Per-format positions** for callouts (move a callout only in 16:9)
-- 🧪 **Tests**: the pure modules (`src/captions.mjs`, `src/audio.mjs`, `stageFit`) are easy to start with
-- ⚙️ **CI**: lint and a smoke test on every pull request
+- 🧪 **Editor tests**: the modules are covered (`npm test`); the editor UI and rendering aren't yet
+- 🎞️ **Transitions between clips**: crossfades, slides and whip pans on the device screen
+- 🖼️ **Templates**: save a video as a reusable starting point for the next one
 
 Found a bug? [Open an issue](https://github.com/tinygusie2/motion-studio/issues/new/choose). Have an idea?
 Same place. Questions are welcome too.

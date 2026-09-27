@@ -39,7 +39,8 @@ http://localhost:3400. That's the quickest way to develop the UI.
 - `ui/widgets.js`: the menu bar, plus the dropdowns (styled popovers over native `<select>`s, which stay the
   source of truth).
 - `ui/player.js`: the preview player that is injected into previews.
-- `scripts/`: Windows code signing.
+- `scripts/`: Windows code signing, and `check.mjs` (a syntax check of every script).
+- `test/`: unit tests for the pure modules (`npm test`, Node's built-in test runner).
 
 Every change in the editor goes through `commit(fn)`. That function takes an undo snapshot, re-renders and saves.
 Position-only edits made directly in the preview (taps, callouts, captions) use `commit(fn, { quiet: true })`,
@@ -96,11 +97,17 @@ The style comes from `captionDefaults` < `brand.captions` < `video.captions`. It
 
 `audio` is the voice track (a generated voice-over or an upload). `audioVol` is its level (0..1, `data-volume`).
 
-`music` is a bed on its own track: `{ src, start, media, dur?, vol, fadeIn, fadeOut, duck }`. Its level is
-written as a `data-automation` volume lane. The lane contains the fades, and it lowers the level by `duck` while
-the voice speaks. "Speaking" means the VO lines that have a length, merged across short pauses; a voice track
-without lines counts as speaking throughout. The preview player evaluates the same lane, so the preview and the
-render agree.
+`music` is a bed on its own track: `{ src, start, media, dur?, vol, fadeIn, fadeOut, duck, carve }`. Its level
+is written as a `data-automation` volume lane. The lane contains the fades, and it lowers the level by `duck`
+while the voice speaks. "Speaking" means the VO lines that have a length, merged across short pauses; a voice
+track without lines counts as speaking throughout. The preview player evaluates the same lane, so the preview
+and the render agree.
+
+`carve` (0..1) adds a voice carve: a HyperFrames `data-fx-chain` of three peaking filters (800 Hz, 1.6 kHz and
+3 kHz, `CARVE_BANDS` in `src/audio.mjs`), each with a `fx.carveN.gain` lane. The lanes follow the same speaking
+envelope as the duck, down to −12 dB × `carve` at 1.6 kHz. The preview player builds the same filters with Web
+Audio from `data-fx-chain` and plays their lanes, so you hear the carve while editing. `window.__player.fx()` in
+a preview shows the live values.
 
 ## Zoom focus
 
@@ -128,6 +135,13 @@ produces (default `['9:16']`):
 
 `stageFit` in `src/template.mjs` scales and moves the stage so that the layout's `box` fills the format's `area`.
 Captions keep their relative height.
+
+Callouts and captions can have a position of their own per format:
+- `chip.pos['16:9'] = { x, y }`
+- `captions.pos['16:9'] = y`
+
+Dragging them in a 4:5, 1:1 or 16:9 preview writes these; in the 9:16 preview they move for all formats. See
+`placeIn` in `src/template.mjs`.
 
 Because the stage keeps its own coordinates, zoom focus points, crops, callout positions and taps need no
 conversion. The editor can preview any format (`?f=4:5` on `/preview/<id>/`). A separate `projects/<id><suffix>/`

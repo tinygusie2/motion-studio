@@ -28,6 +28,8 @@ export const formats = {
   '16:9': { label: '16:9 liggend', w: 1920, h: 1080, suffix: '-16x9', kind: 'side', area: [1010, 70, 840, 1010] }
 };
 export const formatOf = f => formats[f] ? f : '9:16';
+// A callout's position in a format: its own override for that format (c.pos['16:9'] = { x, y }), else the 9:16 one.
+export const placeIn = (c, fmt) => (formatOf(fmt) !== '9:16' && c.pos?.[formatOf(fmt)]) || c;
 
 // Scale + offset that puts the stage's device box into the format's area (null = the stage is the frame).
 export function stageFit(fmt, L) {
@@ -136,7 +138,8 @@ export function build(v, brand, fmt = '9:16') {
   const firstLive = v.chips.find(c => c.live);
   const chips = v.chips.map((c, i) => {
     const [bg, ink] = chipColors[c.color] || chipColors.blue || Object.values(chipColors)[0];
-    return `<div id="chip${i}" class="chip" style="left:${c.x}px;top:${c.y}px">
+    const at = placeIn(c, fmt);
+    return `<div id="chip${i}" class="chip" style="left:${at.x}px;top:${at.y}px">
           <span class="chip-icon" style="background:${bg};color:${ink}"><span class="ms">${esc(c.icon)}</span></span>
           <span class="chip-copy"><span class="chip-label" style="color:${bg}">${c.live ? '<i class="live-dot"></i>' : ''}${esc(c.label)}</span><span class="chip-text" id="chip${i}-text">${esc(c.text)}</span></span>
         </div>`;
@@ -144,6 +147,7 @@ export function build(v, brand, fmt = '9:16') {
   const mix = v.music?.src ? musicMix(v) : null;
   // Captions: one element per on-screen word group, one span per word (timed in the script).
   const cs = captionStyle(brand, v);
+  cs.y = v.captions?.pos?.[formatOf(fmt)] ?? cs.y;
   const capGroups = v.captions?.off ? [] : captionGroups(v.subs, Math.max(1, cs.words | 0), END - 0.15);
   const capColor = hex(cs.color || T.text), capHi = hex(cs.hi || T.accent), capInk = hex(cs.ink || T.accentInk);
   // Other formats: the caption line keeps its relative height, the text shrinks less than the frame does.
@@ -427,7 +431,7 @@ export function build(v, brand, fmt = '9:16') {
         ${captions}
       </div>
 ${v.audio ? `      <audio id="vo" src="assets/vo/${esc(v.audio)}" data-start="0" data-duration="${DUR}"${v.audioVol != null && v.audioVol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +v.audioVol))}"` : ''} data-track-index="40"></audio>
-` : ''}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }] }))}" data-track-index="41"></audio>
+` : ''}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" ${mix.fx ? `data-fx-chain="${esc(JSON.stringify(mix.fx.chain))}" ` : ''}data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }, ...(mix.fx?.lanes || [])] }))}" data-track-index="41"></audio>
 ` : ''}
       <div id="endcard">
         <div id="end-mark"><div id="end-ring"></div><div id="end-logo">${brand.logoHtml || ''}</div></div>

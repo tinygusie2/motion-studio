@@ -207,7 +207,7 @@ function wirePreviewDom(doc) {
       const i = +chip.id.slice(4);
       select({ kind: 'chips', i }, false);
       S.player.pause();
-      const c = V().chips[i], x0 = e.clientX, y0 = e.clientY, ox = c.x, oy = c.y;
+      const at = chipAt(V().chips[i]), x0 = e.clientX, y0 = e.clientY, ox = at.x, oy = at.y;
       const k = +doc.getElementById('stage')?.dataset.scale || 1; // other formats draw the stage scaled
       let moved = false;
       const move = ev => {
@@ -217,7 +217,7 @@ function wirePreviewDom(doc) {
       };
       const up = ev => {
         doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', up);
-        if (moved) commit(v => { v.chips[i].x = Math.round(ox + (ev.clientX - x0) / k); v.chips[i].y = Math.round(oy + (ev.clientY - y0) / k); }, { quiet: true });
+        if (moved) commit(v => setChipPos(v, i, Math.round(ox + (ev.clientX - x0) / k), Math.round(oy + (ev.clientY - y0) / k)), { quiet: true });
       };
       doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', up);
       return;
@@ -233,14 +233,14 @@ function wirePreviewDom(doc) {
       S.player.pause();
       const j = V().subs.findIndex(s => S.t >= s.t && S.t < s.out);
       if (j >= 0) select({ kind: 'sub', i: j }, false);
-      const box = doc.getElementById('captions'), y0 = e.clientY, oy = captionStyle(brandOf(), V()).y;
+      const box = doc.getElementById('captions'), y0 = e.clientY, oy = capY();
       const ck = +box.dataset.scale || 1;
       const y = ev => Math.round(Math.max(100, Math.min(1850, oy + (ev.clientY - y0) / ck)) / 5) * 5;
       let moved = false;
       const move = ev => { moved = true; box.style.top = `${y(ev) * ck}px`; };
       const up = ev => {
         doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', up);
-        if (moved) commit(v => { v.captions = { ...(v.captions || {}), y: y(ev) }; }, { quiet: true });
+        if (moved) commit(v => setCapY(v, y(ev)), { quiet: true });
       };
       doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', up);
       return;
@@ -276,6 +276,23 @@ function wirePreviewDom(doc) {
   // After a click in the preview the clipboard shortcuts land in its document; hand them to the editor.
   for (const type of ['copy', 'cut', 'paste']) doc.addEventListener(type, e => { e.preventDefault(); document.dispatchEvent(new Event(type)); });
 }
+// ---------- per-format positions ----------
+// In the 9:16 preview callouts and captions move for every format; in another format's preview they get a position
+// of their own for that format only (chip.pos[fmt] = { x, y }, captions.pos[fmt] = y), like the template reads them.
+const ownFormat = () => S.pf !== '9:16' && S.formats?.[S.pf] ? S.pf : null;
+const chipAt = c => (ownFormat() && c.pos?.[ownFormat()]) || c;
+function setChipPos(v, i, x, y) {
+  const c = v.chips[i], f = ownFormat();
+  if (f) c.pos = { ...(c.pos || {}), [f]: { x, y } }; else { c.x = x; c.y = y; }
+}
+const capY = (v = V()) => v.captions?.pos?.[ownFormat()] ?? captionStyle(brandOf(), v).y;
+function setCapY(v, y) {
+  const f = ownFormat();
+  v.captions = { ...(v.captions || {}) };
+  if (f) v.captions.pos = { ...(v.captions.pos || {}), [f]: y }; else v.captions.y = y;
+}
+const fmtName = () => S.formats?.[S.pf]?.label || S.pf;
+
 // ---------- taps: markers, tap mode ----------
 // Taps live inside #phone-inner (they move and zoom with the device), in #phone's own pixels.
 function devicePoint(doc, e) {
@@ -990,6 +1007,8 @@ function musicPanel(it) {
     el('p', { class: 'hint' }, `${mix.start.toFixed(1)}s → ${(mix.start + mix.dur).toFixed(1)}s in de video${len ? ` · nummer ${len.toFixed(1)}s` : ''}. De lijn is het volume.`),
     slider('Volume', m.vol, set((x, mm) => (mm.vol = x))),
     slider('Zachter onder de stem', 1 - m.duck, set((x, mm) => (mm.duck = round(1 - x))), { max: 0.95 }),
+    slider('Ruimte voor de stem (EQ)', m.carve ?? 0, set((x, mm) => (mm.carve = round(x))), { fmt: x => (x > 0 ? `−${Math.round(12 * x)} dB rond 1,6 kHz` : 'uit') }),
+    el('p', { class: 'hint' }, 'Haalt tijdens het spreken alleen de spraakfrequenties uit de muziek. Zo blijft de stem verstaanbaar en kan de muziek voller blijven. Je hoort het ook in de preview.'),
     el('p', { class: 'hint' }, !v.audio ? 'Er is geen stemspoor, dus de muziek hoeft nergens zachter.'
       : v.vo.lines.some(l => l.len) ? `Zakt weg onder ${spans.length} stuk(ken) voice-over en komt in de pauzes weer omhoog.`
       : 'Het stemspoor heeft geen voice-over zinnen met een lengte, dus de muziek blijft de hele tijd zachter.'),
@@ -1051,8 +1070,12 @@ function captionStyleFields() {
     el('div', { class: 'field-row' },
       field('Grootte (px)', cs.size, (x, v) => set({ size: x })(v), { type: 'number', step: 2, min: 24, max: 200, key: 'cap-size' }),
       field('Woorden per keer', cs.words, (x, v) => set({ words: Math.max(1, Math.round(x)) })(v), { type: 'number', step: 1, min: 1, max: 12, key: 'cap-words' })),
-    field('Hoogte in beeld (Y, px)', cs.y, (x, v) => set({ y: x })(v), { type: 'number', step: 10, min: 100, max: 1850, key: 'cap-y' }),
-    el('p', { class: 'hint' }, 'Of sleep de ondertitel in de preview. Onder de 1580 px valt hij achter de TikTok-knoppen.'),
+    field(ownFormat() ? `Hoogte in beeld in ${fmtName()} (Y, px)` : 'Hoogte in beeld (Y, px)', capY(v), (x, v) => setCapY(v, x), { type: 'number', step: 10, min: 100, max: 1850, key: 'cap-y' + S.pf }),
+    ownFormat()
+      ? (v.captions?.pos?.[ownFormat()] != null
+        ? el('p', { class: 'hint' }, `Eigen hoogte voor ${fmtName()}. `, el('a', { href: '#', onclick: e => { e.preventDefault(); commit(v => { delete v.captions.pos[ownFormat()]; }); } }, 'Terug naar de 9:16-hoogte'))
+        : el('p', { class: 'hint' }, `Volgt 9:16. Sleep de ondertitel in deze preview om hem alleen in ${fmtName()} te verplaatsen.`))
+      : el('p', { class: 'hint' }, 'Of sleep de ondertitel in de preview. Onder de 1580 px valt hij achter de TikTok-knoppen.' + (Object.keys(v.captions?.pos || {}).length ? ` Eigen hoogte in: ${Object.keys(v.captions.pos).join(', ')}.` : '')),
     el('div', { class: 'field-row' },
       check('HOOFDLETTERS', cs.upper, (x, v) => set({ upper: x })(v)),
       check('Zwarte rand', cs.outline, (x, v) => set({ outline: x })(v))),
@@ -1435,9 +1458,13 @@ function chipPanel(i, c) {
       field('In (s)', c.t, (x, v) => (v.chips[i].t = x), { type: 'number', step: 0.05, min: 0 }),
       field('Uit (s)', c.out, (x, v) => (v.chips[i].out = x), { type: 'number', step: 0.05, min: 0 })),
     el('div', { class: 'field-row' },
-      field('X (px)', c.x, (x, v) => (v.chips[i].x = x), { type: 'number', step: 10 }),
-      field('Y (px)', c.y, (x, v) => (v.chips[i].y = x), { type: 'number', step: 10 })),
-    el('p', { class: 'hint' }, 'Of sleep de callout in de preview.'),
+      field(ownFormat() ? `X in ${S.pf} (px)` : 'X (px)', chipAt(c).x, (x, v) => setChipPos(v, i, x, chipAt(v.chips[i]).y), { type: 'number', step: 10, key: 'chipx' + i + S.pf }),
+      field(ownFormat() ? `Y in ${S.pf} (px)` : 'Y (px)', chipAt(c).y, (y, v) => setChipPos(v, i, chipAt(v.chips[i]).x, y), { type: 'number', step: 10, key: 'chipy' + i + S.pf })),
+    ownFormat()
+      ? (c.pos?.[ownFormat()]
+        ? el('p', { class: 'hint' }, `Eigen positie voor ${fmtName()}. `, el('a', { href: '#', onclick: e => { e.preventDefault(); commit(v => { delete v.chips[i].pos[ownFormat()]; if (!Object.keys(v.chips[i].pos).length) delete v.chips[i].pos; }); } }, 'Terug naar de 9:16-positie'))
+        : el('p', { class: 'hint' }, `Volgt 9:16. Sleep de callout in deze preview om hem alleen in ${fmtName()} te verplaatsen.`))
+      : el('p', { class: 'hint' }, 'Of sleep de callout in de preview.' + (Object.keys(c.pos || {}).length ? ` Eigen positie in: ${Object.keys(c.pos).join(', ')}.` : '')),
     check('Live-stip (knippert)', c.live, (x, v) => { if (x) v.chips[i].live = true; else delete v.chips[i].live; }),
     check('Optellend getal', c.count != null, (x, v) => { if (x) { v.chips[i].count = parseInt(String(c.text).replace(/\D/g, '')) || 1000; v.chips[i].suffix ??= ''; } else { delete v.chips[i].count; delete v.chips[i].suffix; } }),
     c.count != null ? el('div', { class: 'field-row' },
@@ -1502,7 +1529,7 @@ function openBatch() {
   dlg.showModal();
 }
 
-function setPreviewFormat(k) { S.pf = k; try { localStorage.setItem('ms-pf', k); } catch {} renderFormatBar(); fitStage(); if (V()) reloadPreview(); }
+function setPreviewFormat(k) { S.pf = k; try { localStorage.setItem('ms-pf', k); } catch {} renderFormatBar(); fitStage(); if (V()) { reloadPreview(); renderInspector(); } }
 function zoomTimeline(f) { S.pps = Math.max(20, Math.min(240, S.pps * f)); $('#tl-zoom').value = S.pps; try { localStorage.setItem('ms-pps', S.pps); } catch {} renderTimeline(); }
 const revealRenders = () => api('/api/workspace/reveal', { method: 'POST', body: JSON.stringify({ what: 'renders' }) });
 

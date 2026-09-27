@@ -23,7 +23,7 @@ small fix; that way we can agree on the approach before you spend your evening o
 
 ## Setting up
 
-You need [Node.js](https://nodejs.org) 20+ and [ffmpeg](https://ffmpeg.org) on your `PATH`.
+You need [Node.js](https://nodejs.org) 22+ and [ffmpeg](https://ffmpeg.org) on your `PATH`.
 
 ```bash
 git clone https://github.com/<you>/motion-studio.git
@@ -64,9 +64,11 @@ you:
 
 ### Checking your change
 
-There are no automated tests yet (adding them is a great first contribution!). Before opening a PR, please:
+`npm test` runs the unit tests (`test/*.test.mjs`, Node's built-in runner, no extra dependencies) and
+`npm run check` syntax-checks every script. Both run automatically on every pull request. Before opening a PR,
+please:
 
-- Run `node --check` on the files you changed.
+- Run `npm run check` and `npm test`, and add a test when you change `src/` (look at the existing ones, they're short).
 - Open the editor (`npm run serve` or `npm start`) and try what you changed, plus undo/redo.
 - If you touched `src/template.mjs`, render a short video (the Render button) and look at the MP4, not only the
   preview.
