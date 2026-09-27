@@ -26,7 +26,7 @@ small fix; that way we can agree on the approach before you spend your evening o
 You need [Node.js](https://nodejs.org) 22+ and [ffmpeg](https://ffmpeg.org) on your `PATH`.
 
 ```bash
-git clone https://github.com/<you>/motion-studio.git
+git clone https://github.com/tinygusie2/motion-studio.git
 cd motion-studio
 npm install
 npm run serve      # editor in your browser at http://localhost:3400, the fastest loop for UI work
