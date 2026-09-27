@@ -190,13 +190,19 @@ function wirePreviewDom(doc) {
   markPreviewSelection(doc);
   drawTapMarks(doc);
   doc.addEventListener('pointerdown', e => {
+    // Invisible layers (the end card, the top fade, callouts that aren't showing yet) lie on top of the device,
+    // so the event target is often one of those. Look through every layer under the pointer instead and take the
+    // first visible match.
+    const hits = doc.elementsFromPoint(e.clientX, e.clientY);
+    const shown = n => { for (let x = n; x && x !== doc.body; x = x.parentElement) if (+getComputedStyle(x).opacity < 0.05) return false; return true; };
+    const pick = sel => { for (const n of hits) { const m = n.closest(sel); if (m && shown(m)) return m; } return null; };
     // Tap markers: drag to move (live, no rebuild).
-    const mark = e.target.closest('.ms-tapmark');
+    const mark = pick('.ms-tapmark');
     if (mark) return dragTapMark(doc, mark, e);
     // Tap mode: a click on the device adds a tap there, at the playhead; playback keeps running.
-    if (S.tapMode && e.target.closest('#phone')) { e.preventDefault(); return placeTap(doc, e); }
-    const chip = e.target.closest('.chip');
-    if (chip && +getComputedStyle(chip).opacity > 0.05) {
+    if (S.tapMode && pick('#phone')) { e.preventDefault(); return placeTap(doc, e); }
+    const chip = pick('.chip');
+    if (chip) {
       e.preventDefault();
       const i = +chip.id.slice(4);
       select({ kind: 'chips', i }, false);
@@ -239,10 +245,10 @@ function wirePreviewDom(doc) {
       doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', up);
       return;
     }
-    const head = e.target.closest('h1.head');
+    const head = pick('h1.head');
     if (head) { const idx = sortedHeads().findIndex(h => h.i === +head.id.slice(1)); if (idx >= 0) select({ kind: 'head', i: +head.id.slice(1) }, false); return; }
-    if (e.target.closest('#endcard') && S.t >= END()) return select({ kind: 'end', i: 0 }, false);
-    const phone = e.target.closest('.phone');
+    if (S.t >= END() && pick('#endcard')) return select({ kind: 'end', i: 0 }, false);
+    const phone = pick('.phone');
     // With a zoom selected, a click on the device picks its focus point (mapped back through the current zoom).
     // With a tap selected, a click on the (first) device moves it there.
     if (phone && S.sel?.kind === 'tap') {
