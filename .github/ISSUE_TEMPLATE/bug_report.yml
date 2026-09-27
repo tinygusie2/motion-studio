@@ -1,0 +1,34 @@
+name: Bug report
+description: Something doesn't work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this! The more precise, the faster it gets fixed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open a video with the browser layout\n2. Add a zoom\n3. …"
+  - type: textarea
+    id: log
+    attributes:
+      label: Render log or error message (if any)
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit and OS
+      placeholder: "e.g. v1.0.0 on Windows 11, or commit abc123 on macOS 15"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, spec file or anything else
+      description: A screenshot, or the video's specs/<id>.json, often says more than words.

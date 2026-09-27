@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Motion Studio</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500..600,0..1,0&display=block" />
+  <link rel="stylesheet" href="/ui/editor.css" />
+</head>
+<body>
+  <header id="bar">
+    <span class="brand-mark" title="Motion Studio"><span class="ms">movie_edit</span></span>
+    <nav id="menubar"></nav>
+    <div class="spacer"></div>
+    <div class="doc-switch">
+      <button id="btn-project" class="ghost project-btn" title="Project wisselen of nieuw project maken (Ctrl+O)"><span class="ms">folder</span><span id="project-name">Project</span></button>
+      <span class="crumb">/</span>
+      <select id="video-select" title="Video openen"></select>
+    </div>
+    <div class="spacer"></div>
+    <div class="group">
+      <button id="btn-undo" class="ghost icon" title="Ongedaan maken (Ctrl+Z)"><span class="ms">undo</span></button>
+      <button id="btn-redo" class="ghost icon" title="Opnieuw (Ctrl+Shift+Z)"><span class="ms">redo</span></button>
+      <span id="save-state" class="muted">Opgeslagen</span>
+    </div>
+    <button id="btn-render" class="primary" title="Render MP4 (Ctrl+R)"><span class="ms">movie</span>Render</button>
+  </header>
+
+  <aside id="library">
+    <section>
+      <h3>Toevoegen</h3>
+      <div class="add-grid">
+        <button data-add="head"><span class="ms">title</span>Tekst</button>
+        <button data-add="chips"><span class="ms">sell</span>Callout</button>
+        <button data-add="zoom"><span class="ms">zoom_in</span>Zoom</button>
+        <button data-add="vo"><span class="ms">record_voice_over</span>VO-zin</button>
+        <button data-add="sub"><span class="ms">subtitles</span>Ondertitel</button>
+        <button data-add="tap"><span class="ms">touch_app</span>Tik</button>
+      </div>
+    </section>
+    <section class="grow">
+      <div class="row-between">
+        <h3>Clips</h3>
+        <label class="upload" title="Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)">
+          <span class="ms">upload</span>Upload
+          <input id="upload" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp" multiple hidden />
+        </label>
+      </div>
+      <p class="hint">Klik op een clip om hem op de playhead in de telefoon te zetten. Sleep bestanden hierheen om te uploaden.</p>
+      <div id="clip-list"></div>
+      <h3 class="mt">Audio</h3>
+      <div id="audio-list"></div>
+    </section>
+  </aside>
+
+  <section id="stage">
+    <div id="stage-tools">
+      <div id="format-bar" class="seg fmt" title="Formaat van de preview"></div>
+      <label class="toggle"><input id="safe-toggle" type="checkbox" /> TikTok-veilige zone</label>
+      <button id="btn-tapmode" class="ghost tapmode" title="Tik-modus: klik op het apparaat om tikken te plaatsen (T)"><span class="ms">ads_click</span>Tik-modus</button>
+      <span class="muted" id="stage-hint">Sleep callouts, ondertitels en tikken in de preview om ze te verplaatsen</span>
+    </div>
+    <div id="stage-fit">
+      <div id="frame-box">
+        <iframe class="pv front" allow="autoplay"></iframe>
+        <iframe class="pv back" allow="autoplay"></iframe>
+        <div id="safe-zone" hidden>
+          <div class="sz-right"></div><div class="sz-bottom"></div><div class="sz-top"></div>
+        </div>
+        <div id="pv-loading" hidden>Laden…</div>
+      </div>
+    </div>
+    <div id="transport">
+      <button id="btn-start" class="ghost icon" title="Naar begin (Home)"><span class="ms">skip_previous</span></button>
+      <button id="btn-prev" class="ghost icon" title="1 frame terug (←)"><span class="ms">chevron_left</span></button>
+      <button id="btn-play" class="play" title="Afspelen (spatie)"><span class="ms">play_arrow</span></button>
+      <button id="btn-next" class="ghost icon" title="1 frame verder (→)"><span class="ms">chevron_right</span></button>
+      <span id="timecode">0:00.00 / 0:15.00</span>
+    </div>
+  </section>
+
+  <aside id="inspector"></aside>
+
+  <footer id="timeline">
+    <div id="tl-head">
+      <span class="muted">Tijdlijn</span>
+      <span class="hint">Sleep blokken om te verschuiven, sleep randen om in te korten · Spatie = afspelen · S = splitsen op playhead · Del = verwijderen · Ctrl+D = dupliceren</span>
+      <div class="spacer"></div>
+      <span class="ms muted">zoom_out</span>
+      <input id="tl-zoom" type="range" min="20" max="240" value="70" />
+      <label class="toggle" title="Beats van de muziek tonen en erop snappen"><input id="beats-toggle" type="checkbox" /> Beats</label>
+      <span class="ms muted">zoom_in</span>
+    </div>
+    <div id="tl-scroll">
+      <div id="tl-inner">
+        <div id="tl-ruler"></div>
+        <div id="tl-rows"></div>
+        <div id="tl-playhead"><span></span></div>
+      </div>
+    </div>
+  </footer>
+
+  <dialog id="dlg-new">
+    <form method="dialog">
+      <h2>Nieuwe video</h2>
+      <label>Naam (id)<input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="v11-deload" /></label>
+      <p class="hint">Kleine letters, cijfers en streepjes. Wordt ook de bestandsnaam van de render.</p>
+      <label>Begin vanaf<select name="base"></select></label>
+      <label>Merk<select name="brand"></select></label>
+      <p class="error" id="new-error"></p>
+      <div class="dlg-actions">
+        <button value="cancel" formnovalidate class="ghost">Annuleren</button>
+        <button value="ok" class="primary">Aanmaken</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-job">
+    <h2 id="job-title">Renderen</h2>
+    <div class="progress"><div id="job-bar"></div></div>
+    <pre id="job-log"></pre>
+    <div id="job-result"></div>
+    <div class="dlg-actions"><button id="job-close" class="ghost">Sluiten</button></div>
+  </dialog>
+
+  <dialog id="dlg-project">
+    <h2>Projecten</h2>
+    <p class="hint">Een project is een map met eigen merken, video's, clips en renders.</p>
+    <div id="recent-list"></div>
+    <div class="dlg-actions spread">
+      <button id="proj-open" class="ghost"><span class="ms">folder_open</span>Map openen…</button>
+      <button id="proj-new" class="primary"><span class="ms">create_new_folder</span>Nieuw project…</button>
+    </div>
+    <div id="proj-create" hidden>
+      <label>Naam<input id="proj-name" placeholder="Mijn app TikToks" /></label>
+      <label>Map<div class="path-row"><input id="proj-path" placeholder="C:\Users\…\Documents\MijnApp-videos" /><button id="proj-browse" class="ghost">Kies…</button></div></label>
+      <div class="dlg-actions"><button id="proj-create-go" class="primary">Aanmaken</button></div>
+    </div>
+    <p class="error" id="proj-error"></p>
+    <div class="dlg-actions"><button id="proj-close" class="ghost">Sluiten</button></div>
+  </dialog>
+
+  <dialog id="dlg-brand">
+    <form method="dialog">
+      <h2>Nieuw merk</h2>
+      <label>Naam (zoals op de eindkaart)<input name="name" required placeholder="MyApp" /></label>
+      <label>Id (bestandsnaam)<input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="myapp" /></label>
+      <p class="hint">Kleine letters, cijfers en streepjes. Wordt ingevuld op basis van de naam.</p>
+      <label>Begin vanaf<select name="from"></select></label>
+      <p class="error" id="brand-error"></p>
+      <div class="dlg-actions">
+        <button value="cancel" formnovalidate class="ghost">Annuleren</button>
+        <button value="ok" class="primary">Aanmaken</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-settings">
+    <h2>Instellingen</h2>
+    <label>HyperFrames-versie (voor render en Engelse TTS)<input id="set-hf" /></label>
+    <label>Python met Kokoro/Piper (TTS)<div class="path-row"><input id="set-python" /><button data-browse="set-python" data-file="1" class="ghost">Kies…</button></div></label>
+    <label>Map met Piper-stemmen (.onnx)<div class="path-row"><input id="set-piper" /><button data-browse="set-piper" class="ghost">Kies…</button></div></label>
+    <label class="check"><input id="set-downloads" type="checkbox" /> Renders ook naar Downloads kopiëren</label>
+    <p class="hint" id="set-detected"></p>
+    <div class="dlg-actions"><button id="set-cancel" class="ghost">Annuleren</button><button id="set-save" class="primary">Opslaan</button></div>
+  </dialog>
+
+  <dialog id="dlg-keys">
+    <h2>Sneltoetsen</h2>
+    <div id="keys-list"></div>
+    <div class="dlg-actions"><form method="dialog"><button class="primary">Sluiten</button></form></div>
+  </dialog>
+
+  <dialog id="dlg-batch">
+    <h2>Meerdere video's renderen</h2>
+    <p class="hint">Rendert de gekozen video's na elkaar, elk in de formaten die bij die video zijn aangevinkt. Je kunt dit venster sluiten; het renderen gaat door.</p>
+    <div class="batch-tools"><button id="batch-all" class="ghost">Alles</button><button id="batch-none" class="ghost">Niets</button></div>
+    <div id="batch-list"></div>
+    <p class="error" id="batch-error"></p>
+    <div class="dlg-actions"><button id="batch-cancel" class="ghost">Annuleren</button><button id="batch-go" class="primary"><span class="ms">video_library</span>Renderen</button></div>
+  </dialog>
+
+  <dialog id="dlg-crop">
+    <h2>Bijsnijden</h2>
+    <p class="hint" id="crop-hint"></p>
+    <div id="crop-stage"></div>
+    <div class="crop-bar">
+      <label class="check"><input id="crop-lock" type="checkbox" checked /> Vorm van het scherm aanhouden (<span id="crop-ratio"></span>)</label>
+      <span id="crop-info" class="muted"></span>
+    </div>
+    <div class="dlg-actions spread">
+      <button id="crop-all" class="ghost"><span class="ms">fullscreen</span>Hele beeld</button>
+      <span class="dlg-actions"><button id="crop-cancel" class="ghost">Annuleren</button><button id="crop-ok" class="primary">Toepassen</button></span>
+    </div>
+  </dialog>
+
+  <div id="drop-overlay" hidden><span class="ms">upload</span>Laat los om te uploaden</div>
+  <div id="toast" hidden></div>
+
+  <script src="/ui/editor.js" type="module"></script>
+</body>
+</html>

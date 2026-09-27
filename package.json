@@ -1,0 +1,31 @@
+{
+  "name": "motion-studio",
+  "productName": "Motion Studio",
+  "version": "1.0.0",
+  "description": "Desktop editor for short motion-graphics videos of your app: device mockups, callouts, zooms, captions, voice-over and music, rendered with HyperFrames.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinygusie2/motion-studio.git"
+  },
+  "homepage": "https://github.com/tinygusie2/motion-studio#readme",
+  "bugs": {
+    "url": "https://github.com/tinygusie2/motion-studio/issues"
+  },
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node src/server.mjs",
+    "build": "node src/cli.mjs build",
+    "pack": "electron-packager . \"Motion Studio\" --platform=win32 --arch=x64 --out=dist --overwrite --icon=resources/icon.ico --ignore=^/dist --ignore=^/scripts --ignore=^/docs --ignore=^/.github --ignore=^/.claude --no-asar",
+    "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1",
+    "sign:cert": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-selfsigned-cert.ps1",
+    "dist": "npm run pack && npm run sign"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.4.5"
+  }
+}

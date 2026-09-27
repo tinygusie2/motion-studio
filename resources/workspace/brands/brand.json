@@ -1,0 +1,13 @@
+{
+  "name": "MyApp",
+  "lang": "en",
+  "url": "myapp.com",
+  "logo": "brand.svg",
+  "theme": {
+    "bg": "#0f1013", "accent": "#ffd27a", "accentInk": "#3a2600",
+    "glow": "#ffb84d", "glow2": "#ff8fa3", "orbit": "#ffc766", "orbit2": "#8fd3ff",
+    "deviceGlow": "#ffb84d", "deviceRing": "#3a3f4a"
+  },
+  "pills": [["bolt", "Free"], ["language", "Web"], ["smartphone", "Mobile"]],
+  "endNameSize": 140
+}
