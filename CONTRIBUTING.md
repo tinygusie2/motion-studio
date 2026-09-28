@@ -77,10 +77,13 @@ User content (video names, captions, file names, the video itself) is never tran
 ### Checking your change
 
 `npm test` runs the unit tests (`test/*.test.mjs`, Node's built-in runner, no extra dependencies) and
-`npm run check` syntax-checks every script. Both run automatically on every pull request. Before opening a PR,
+`npm run check` syntax-checks every script. `npm run test:ui` drives the editor in your installed Chrome or Edge
+(`test/ui/`, through playwright-core; without either browser the tests are skipped). All three run automatically on
+every pull request. Before opening a PR,
 please:
 
 - Run `npm run check` and `npm test`, and add a test when you change `src/` (look at the existing ones, they're short).
+  Changed how the timeline or undo behaves? Run `npm run test:ui` too, and add a case there.
 - Open the editor (`npm run serve` or `npm start`) and try what you changed, plus undo/redo.
 - If you touched `src/template.mjs`, render a short video (the Render button) and look at the MP4, not only the
   preview.

@@ -10,7 +10,7 @@ import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { layouts, formats, transitions, normalize, defaultTheme, defaultChipColors } from './template.mjs';
 import { toSrt } from './captions.mjs';
-import { APP_ROOT, Workspace, createWorkspace, isWorkspace, loadSettings, saveSettings, validId } from './workspace.mjs';
+import { APP_ROOT, GSAP_FILE, Workspace, createWorkspace, isWorkspace, loadSettings, saveSettings, validId } from './workspace.mjs';
 
 const UI = join(APP_ROOT, 'ui');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8','.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf', '.ico': 'image/x-icon' };
@@ -42,9 +42,11 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const inside = (dir, file) => resolve(file).startsWith(resolve(dir));
 const slug = name => basename(name, extname(name)).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'file';
 
-function run(cmd, args, opts = {}, onLine) {
+// onSpawn gets the child process, so a job can stop it.
+function run(cmd, args, opts = {}, onLine, onSpawn) {
   return new Promise((ok, fail) => {
     const p = spawn(cmd, args, { shell: process.platform === 'win32' && cmd === 'npx', windowsHide: true, ...opts });
+    onSpawn?.(p);
     let out = '';
     const take = d => { const s = d.toString(); out += s; if (onLine) s.split(/[\r\n]+/).forEach(onLine); };
     p.stdout.on('data', take); p.stderr.on('data', take);
@@ -117,7 +119,20 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     const key = `${kind}:${id}`;
     if (jobs.get(key)?.state === 'running') return jobs.get(key);
     // span: the part of the bar the current step fills (a batch or a multi-format render runs several steps).
-    const job = { kind, id, state: 'running', log: [], progress: 0, span: [0, 100], started: Date.now() };
+    // step: what runs now, for the progress dialog. Stopping kills the running tools (the whole tree on Windows,
+    // where npx runs in a shell).
+    const job = { kind, id, state: 'running', log: [], progress: 0, span: [0, 100], step: null, started: Date.now() };
+    const procs = new Set();
+    Object.defineProperties(job, {
+      track: { value: p => { procs.add(p); p.on('close', () => procs.delete(p)); } },
+      cancel: { value: () => {
+        job.cancelled = true;
+        for (const p of procs) {
+          if (process.platform === 'win32') spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true });
+          else p.kill('SIGTERM');
+        }
+      } }
+    });
     jobs.set(key, job);
     const log = raw => {
       const line = String(raw).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim();
@@ -125,8 +140,9 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
       job.log.push(line); if (job.log.length > 400) job.log.shift();
       const m = /(\d{1,3}(?:\.\d+)?)\s*%/.exec(line); if (m) job.progress = Math.min(100, job.span[0] + (job.span[1] - job.span[0]) * Math.min(100, +m[1]) / 100);
     };
-    work(log, job).then(result => { job.state = 'done'; job.progress = 100; job.result = result; })
-      .catch(err => { job.state = 'error'; log(String(err.message || err)); });
+    work(log, job).then(result => { job.state = job.cancelled ? 'cancelled' : 'done'; if (!job.cancelled) job.progress = 100; job.result = result; })
+      .catch(err => { job.state = job.cancelled ? 'cancelled' : 'error'; log(job.cancelled ? 'Gestopt.' : String(err.message || err)); })
+      .finally(() => { job.finished = Date.now(); });
     return job;
   }
 
@@ -136,14 +152,20 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     await ensureIcons().catch(e => log(`Icoon-font niet bijgewerkt: ${e.message}`));
     const downloads = join(homedir(), 'Downloads');
     const toDownloads = settings.copyToDownloads && existsSync(downloads);
-    const fmts = w.formatsOf(v), files = [];
+    const fmts = w.formatsOf(v), files = [], outputs = [];
     for (const [k, f] of fmts.entries()) {
-      if (job) job.span = [span[0] + (span[1] - span[0]) * k / fmts.length, span[0] + (span[1] - span[0]) * (k + 1) / fmts.length];
-      const dir = w.writeProject(v, f), name = w.renderName(v, f);
+      if (job) {
+        job.span = [span[0] + (span[1] - span[0]) * k / fmts.length, span[0] + (span[1] - span[0]) * (k + 1) / fmts.length];
+        job.step = { ...job.step, i: k, n: fmts.length, format: f };
+      }
+      const dir = w.writeProject(v, f), name = w.renderName(v, f), out = join(w.p.renders, name);
       log(`Renderen naar ${name} (${f})…`);
-      await run('npx', ['--yes', hf, 'render', dir, '-o', `../renders/${name}`], { cwd: w.p.projects }, log);
-      if (toDownloads) { copyFileSync(join(w.p.renders, name), join(downloads, name)); log(`Gekopieerd naar Downloads\\${name}`); }
+      // A stopped render can leave half a file behind: remove it, but never an earlier finished render.
+      try { await run('npx', ['--yes', hf, 'render', dir, '-o', `../renders/${name}`], { cwd: w.p.projects }, log, job?.track); }
+      catch (e) { if (job?.cancelled && existsSync(out) && statSync(out).mtimeMs >= job.started) rmSync(out, { force: true }); throw e; }
+      if (toDownloads) { copyFileSync(out, join(downloads, name)); log(`Gekopieerd naar Downloads\\${name}`); }
       files.push(name);
+      outputs.push({ file: name, format: f, w: formats[f].w, h: formats[f].h, size: statSync(out).size });
     }
     // Subtitle sidecar for platforms that take an uploaded .srt (YouTube, LinkedIn, TikTok ads); the same for every format.
     const srtName = w.renderName(v).replace(/\.mp4$/, '.srt');
@@ -152,7 +174,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
       writeFileSync(join(w.p.renders, srtName), srt, 'utf8'); log(`Ondertitels: ${srtName}`);
       if (toDownloads) copyFileSync(join(w.p.renders, srtName), join(downloads, srtName));
     }
-    return { file: files[0], files, srt: srt ? srtName : null };
+    return { file: files[0], files, outputs, srt: srt ? srtName : null, dur: v.dur ?? 15 };
   }
   // Beats of a music file (source time), detected once by `hyperframes beats` in a scratch project and cached
   // next to the TTS cache, keyed by size + mtime so a replaced file is analysed again.
@@ -184,9 +206,34 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     beatJobs.set(cache, job);
     return job;
   }
+  // Filmstrip of a clip for the timeline: frames `step` seconds apart in one JPEG row, made once per file version
+  // (keyed by size + mtime) in <workspace>/.cache/thumbs.
+  const thumbJobs = new Map();
+  function thumbsOf(name) {
+    const file = join(ws.p.clips, basename(name));
+    if (!existsSync(file) || IMAGE_EXT.includes(extname(file).toLowerCase())) return Promise.reject(new Error('Geen videoclip.'));
+    const st = statSync(file);
+    const key = `${slug(name)}-${createHash('sha1').update(`${name}:${st.size}:${st.mtimeMs}`).digest('hex').slice(0, 10)}`;
+    const dir = join(ws.root, '.cache', 'thumbs'), meta = join(dir, `${key}.json`);
+    if (existsSync(meta)) return Promise.resolve(JSON.parse(readFileSync(meta, 'utf8')));
+    if (!thumbJobs.has(key)) thumbJobs.set(key, (async () => {
+      mkdirSync(dir, { recursive: true });
+      const dur = +(await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file])).trim();
+      if (!(dur > 0)) throw new Error('Onbekende clipduur.');
+      const step = Math.max(0.25, dur / 120), n = Math.max(1, Math.ceil(dur / step));
+      await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', file, '-an', '-vf', `fps=${(1 / step).toFixed(5)},scale=-2:96,tile=${n}x1`, '-frames:v', '1', '-q:v', '5', join(dir, `${key}.jpg`)]);
+      const info = { src: `/thumbs/${key}.jpg`, n, step, dur };
+      writeFileSync(meta, JSON.stringify(info));
+      return info;
+    })().finally(() => thumbJobs.delete(key)));
+    return thumbJobs.get(key);
+  }
+
   async function renderBatch(ids, log, job) {
     const results = [];
     for (const [i, id] of ids.entries()) {
+      if (job.cancelled) break;
+      job.step = { video: id, vi: i, vn: ids.length };
       log(`▶ ${id} (${i + 1}/${ids.length})`);
       try { results.push({ id, ...(await renderVideo(id, log, job, [100 * i / ids.length, 100 * (i + 1) / ids.length])) }); }
       catch (e) { log(`✗ ${id}: ${e.message || e}`); results.push({ id, error: String(e.message || e) }); }
@@ -260,7 +307,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
   }
 
   const previewHtml = (v, fmt) => ws.html(v, fmt)
-    .replace('<script src="https://cdn.jsdelivr.net/npm/gsap', '<script>window.__timelines = {};</script>\n    <script src="https://cdn.jsdelivr.net/npm/gsap')
+    .replace('<script src="gsap.min.js">', '<script>window.__timelines = {};</script>\n    <script src="gsap.min.js">')
     .replace('</body>', '  <script src="/ui/player.js"></script>\n  </body>');
 
   function state() {
@@ -323,16 +370,20 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         ensureIcons().catch(e => console.warn('icons:', e.message));
         return send(res, 200, previewHtml(ws.readSpec(m[1]), url.searchParams.get('f')), MIME['.html']);
       }
+      if (/^\/preview\/[a-z0-9-]+\/gsap\.min\.js$/.test(p)) return sendFile(req, res, GSAP_FILE);
       if ((m = /^\/(?:preview\/[a-z0-9-]+\/)?assets\/(.+)$/.exec(p))) {
         const file = join(ws.p.assets, m[1]);
         return inside(ws.p.assets, file) ? sendFile(req, res, file) : send(res, 403, 'no');
       }
       if ((m = /^\/renders\/([^/]+)$/.exec(p))) return sendFile(req, res, join(ws.p.renders, basename(m[1])));
+      if ((m = /^\/thumbs\/([^/]+\.jpg)$/.exec(p))) return sendFile(req, res, join(ws.root, '.cache', 'thumbs', basename(m[1])));
+      if ((m = /^\/api\/thumbs\/([^/]+)$/.exec(p))) return send(res, 200, await thumbsOf(m[1]));
 
       if ((m = /^\/api\/videos\/([a-z0-9-]+)$/.exec(p))) {
         const id = m[1];
         if (method === 'GET') return ws.hasSpec(id) ? send(res, 200, ws.readSpec(id)) : send(res, 404, { error: 'not found' });
-        if (method === 'PUT') { ws.writeSpec(id, await readJsonBody(req)); return send(res, 200, { ok: true }); }
+        // POST too: navigator.sendBeacon (the last save when the page closes) can only post.
+        if (method === 'PUT' || method === 'POST') { ws.writeSpec(id, await readJsonBody(req)); return send(res, 200, { ok: true }); }
         if (method === 'DELETE') { ws.trashSpec(id); return send(res, 200, { ok: true }); }
       }
       if (p === '/api/videos' && method === 'POST') {
@@ -348,7 +399,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
 
       if ((m = /^\/api\/brands\/([a-z0-9-]+)$/.exec(p))) {
         const id = m[1];
-        if (method === 'PUT') { ws.writeBrand(id, await readJsonBody(req)); return send(res, 200, { ok: true }); }
+        if (method === 'PUT' || method === 'POST') { ws.writeBrand(id, await readJsonBody(req)); return send(res, 200, { ok: true }); }
       }
       if (p === '/api/brands' && method === 'POST') {
         const { id, from, name } = await readJsonBody(req);
@@ -403,6 +454,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
           if (!ids.length) return send(res, 400, { error: 'Kies minstens één video.' });
           return send(res, 200, startJob('batch', 'all', (log, job) => renderBatch(ids, log, job)));
         }
+        if (method === 'DELETE') jobs.get('batch:all')?.cancel();
         return send(res, 200, jobs.get('batch:all') || { state: 'idle' });
       }
       if ((m = /^\/api\/(render|vo)\/([a-z0-9-]+)$/.exec(p))) {
@@ -411,6 +463,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
           if (!ws.hasSpec(id)) return send(res, 404, { error: 'not found' });
           return send(res, 200, startJob(kind, id, kind === 'render' ? (log, job) => renderVideo(id, log, job) : log => voiceOver(id, log)));
         }
+        if (method === 'DELETE') jobs.get(`${kind}:${id}`)?.cancel();
         return send(res, 200, jobs.get(`${kind}:${id}`) || { state: 'idle' });
       }
 

@@ -7,11 +7,14 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build, normalize, formats, formatOf } from './template.mjs';
 
 export const APP_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SKELETON = join(APP_ROOT, 'resources', 'workspace');
+// GSAP ships with the app (npm dependency), so previews and renders work offline and without the CDN.
+export const GSAP_FILE = createRequire(import.meta.url).resolve('gsap/dist/gsap.min.js');
 const readJson = (f, fallback) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return fallback; } };
 const writeJson = (f, data) => writeFileSync(f, JSON.stringify(data, null, 2) + '\n');
 export const validId = id => /^[a-z0-9][a-z0-9-]{0,60}$/.test(id);
@@ -120,6 +123,7 @@ export class Workspace {
     cpSync(this.p.brandAssets, join(out, 'brand'), noTrash);
     for (const c of [...v.clips, ...v.clips2]) cpSync(join(this.p.clips, c.src), join(out, 'clips', c.src));
     for (const a of [v.audio, v.music?.src]) if (a) cpSync(join(this.p.vo, a), join(out, 'vo', a));
+    cpSync(GSAP_FILE, join(dir, 'gsap.min.js'));
     writeFileSync(join(dir, 'index.html'), this.html(v, fmt));
     return name;
   }

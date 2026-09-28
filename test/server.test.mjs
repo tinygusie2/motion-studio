@@ -22,3 +22,22 @@ test('takes the next port in the list when the first is busy', async () => {
     server.close(); busy.close();
   }
 });
+
+test('previews load GSAP from the app, not from a CDN, so they work offline', async () => {
+  const { createWorkspace } = await import('../src/workspace.mjs');
+  const dir = join(home, 'offline');
+  createWorkspace(dir, 'Offline');
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(join(dir, 'specs', 'demo.json'), JSON.stringify({ brand: 'brand', heads: [{ t: 0, text: 'Hi' }], clips: [] }));
+  const { server, url } = await startServer({ port: 0, workspace: dir });
+  try {
+    const page = await (await fetch(`${url}/preview/demo/`)).text();
+    assert.doesNotMatch(page, /<script src="https?:/, 'no scripts from the network');
+    assert.match(page, /<script src="gsap\.min\.js">/);
+    const gsap = await fetch(`${url}/preview/demo/gsap.min.js`);
+    assert.equal(gsap.status, 200);
+    assert.match(await gsap.text(), /GSAP 3\./);
+  } finally {
+    server.close();
+  }
+});
