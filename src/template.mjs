@@ -278,7 +278,7 @@ export function build(v, brand, fmt = '9:16') {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=${FW}, height=${FH}" />
     <title>${esc(brand.name)} — ${esc(v.overline)}</title>
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="gsap.min.js"></script>
     <style>
       @font-face { font-family: 'Brand'; src: url('assets/fonts/${esc(font)}'); font-weight: 100 900; font-style: normal; }
       @font-face { font-family: 'Material Symbols Rounded'; src: url('assets/fonts/material-symbols.woff2') format('woff2'); font-weight: 600; font-style: normal; }

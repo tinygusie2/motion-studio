@@ -80,6 +80,7 @@ On first start, create a project folder (*New project…*), drop a screen record
 | --- | --- |
 | `npm start` | Run the app from source (Electron) |
 | `npm test` / `npm run check` | Run the tests / syntax-check every script (both run in CI on every pull request) |
+| `npm run test:ui` | Editor tests in your installed Chrome or Edge (dragging, trimming, splitting, undo, saving) |
 | `npm run serve` | Run the editor in your normal browser at http://localhost:3400, which is handy for development |
 | `npm run pack` | Build `dist/Motion Studio-win32-x64/Motion Studio.exe` |
 | `npm run sign` | Sign that `.exe` (see [signing](#signing-on-windows)) |
@@ -90,6 +91,8 @@ On first start, create a project folder (*New project…*), drop a screen record
 <kbd>Space</kbd> play · <kbd>S</kbd> split · <kbd>T</kbd> tap mode · <kbd>M</kbd> marker ·
 <kbd>[</kbd> <kbd>]</kbd> previous/next marker or beat · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste
 (also between videos) · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> paste at the same time ·
+<kbd>,</kbd> <kbd>.</kbd> nudge the selection a frame · <kbd>Alt</kbd> while dragging: no snapping ·
+<kbd>Shift</kbd>+<kbd>Del</kbd> ripple delete a clip · <kbd>\</kbd> fit the timeline ·
 <kbd>Ctrl</kbd>+<kbd>R</kbd> render · <kbd>Alt</kbd> menu bar. The full list is under *Help → Keyboard shortcuts*.
 
 ## 🤝 Where you can help
@@ -106,7 +109,8 @@ Everything below is open for grabs. Comment on (or open) an issue so others know
 **Bigger features**
 - 🍎 **macOS and Linux builds**: the code is cross-platform, but packaging and testing aren't there yet
 - 🎙️ **Exact word timing** for captions with Whisper (`hyperframes transcribe`) instead of estimates
-- 🧪 **Editor tests**: the modules are covered (`npm test`); the editor UI and rendering aren't yet
+- 🧪 **More tests**: the modules (`npm test`) and the timeline basics (`npm run test:ui`) are covered; rendering and
+  most of the inspector aren't yet
 - 🎞️ **Transitions between clips**: crossfades, slides and whip pans on the device screen
 - 🖼️ **Templates**: save a video as a reusable starting point for the next one
 

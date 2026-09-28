@@ -19,6 +19,10 @@ A video is a JSON **spec**. The editor edits the spec, the server saves it, and 
 small seekable player. The render feeds the same page to [HyperFrames](https://hyperframes.heygen.com), so the
 preview and the MP4 always match.
 
+GSAP comes from the `gsap` npm package, not a CDN: the preview gets it at `/preview/<id>/gsap.min.js` and every
+render project gets a copy next to its `index.html`, so neither needs the network (the editor's icon font still
+comes from Google Fonts).
+
 `npm run serve` runs the same server without Electron, and you can use the editor in a normal browser at
 http://localhost:3400. That's the quickest way to develop the UI.
 
@@ -42,9 +46,18 @@ http://localhost:3400. That's the quickest way to develop the UI.
 - `scripts/`: Windows code signing, and `check.mjs` (a syntax check of every script).
 - `test/`: unit tests for the pure modules (`npm test`, Node's built-in test runner).
 
-Every change in the editor goes through `commit(fn)`. That function takes an undo snapshot, re-renders and saves.
-Position-only edits made directly in the preview (taps, callouts, captions) use `commit(fn, { quiet: true })`,
-which saves without rebuilding the preview.
+Every change in the editor goes through `commit(fn)`. That function takes an undo snapshot (the spec, the
+selection and the playhead), re-renders and saves 350 ms later. Position-only edits made directly in the preview
+(taps, callouts, captions) use `commit(fn, { quiet: true })`, which saves without rebuilding the preview. Text
+fields pass `live` to `field()`: the text is patched into the preview that is on screen (`liveEdit`), and the
+preview is rebuilt once typing stops. Undo history is kept per video while the editor is open.
+
+A pending save is not lost when the page goes away: a reload or a closed browser tab sends it with
+`navigator.sendBeacon` (a POST to the same route), and the Electron window calls `window.__flushSave()` before it
+closes (`main.mjs`).
+
+While dragging on the timeline only the blocks move (`layoutTimeline`); the timeline is rebuilt when the drag ends,
+or when the rows change shape.
 
 ## Projects (workspaces)
 
@@ -58,6 +71,7 @@ Every project is a folder. Motion Studio can switch between them (Bestand → Pr
 | `assets/clips/` | screen recordings (converted to H.264 on upload) and screenshots (png/jpg); deleted files go to `.trash/` |
 | `assets/vo/` | audio (voice and music); generated voice-overs land here; deleted files go to `.trash/` |
 | `renders/` | finished MP4s (`<renderPrefix>-<id>[-4x5\|-1x1\|-16x9].mp4`), plus a `.srt` when the video has captions |
+| `.cache/thumbs/` | timeline filmstrips: one JPEG row of frames per clip version (`/api/thumbs/<clip>`), safe to delete |
 
 To build without the app, run `node src/cli.mjs build <workspace> [id,id…]`, then `npx hyperframes render` in
 `<workspace>/projects`.

@@ -23,3 +23,5 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run check
       - run: npm test
+      # The editor in the runner's Chrome (playwright-core drives the installed browser, nothing to download).
+      - run: npm run test:ui

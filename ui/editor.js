@@ -34,7 +34,7 @@ const S = {
   spec: null, id: null, sel: null, t: 0, pps: 70,
   pf: (() => { try { return localStorage.getItem('ms-pf') || '9:16'; } catch { return '9:16'; } })(), // preview format
   history: [], future: [], lastKey: null, lastKeyAt: 0,
-  clipDur: {}, clipSize: {}, audioDur: {}, beats: {}, multi: null, pv: 0, player: null, playing: false
+  clipDur: {}, clipSize: {}, thumbs: {}, media: {}, audioDur: {}, beats: {}, histories: {}, multi: null, pv: 0, player: null, playing: false
 };
 
 // ---------- api ----------
@@ -68,8 +68,10 @@ function applyState(s) {
 async function openVideo(id) {
   if (S.tapMode) setTapMode(false);
   if (S.saveTimer) await flushSave();
+  stashHistory();
   S.spec = await api(`/api/videos/${id}`);
-  S.id = id; S.sel = null; S.history = []; S.future = []; S.t = 0;
+  S.id = id; S.sel = null; S.multi = null; S.t = 0;
+  unstashHistory(id);
   localStorage.setItem(`ms-last:${S.workspace.path}`, id);
   $('#video-select').value = id;
   document.title = `${id} · Motion Studio`;
@@ -98,17 +100,36 @@ const listOf = kind => ({ head: V().heads, clips: V().clips, clips2: V().clips2,
 // quiet: the change is already visible in the preview (moved by hand there), so save without rebuilding it.
 function commit(fn, { key = null, refresh = 'all', quiet = false } = {}) {
   const now = Date.now();
-  if (!(key && key === S.lastKey && now - S.lastKeyAt < 1500)) { S.history.push(clone(V())); if (S.history.length > 200) S.history.shift(); }
+  if (!(key && key === S.lastKey && now - S.lastKeyAt < 1500)) pushHistory(snapshot());
   S.lastKey = key; S.lastKeyAt = now;
-  S.future = [];
   fn(V());
   ensureLists();
   if (refresh === 'all') renderAll(); else renderTimeline();
   scheduleSave(quiet);
 }
-function undo() { if (!S.history.length) return; S.future.push(clone(V())); S.spec = S.history.pop(); afterHistory(); }
-function redo() { if (!S.future.length) return; S.history.push(clone(V())); S.spec = S.future.pop(); afterHistory(); }
-function afterHistory() { S.lastKey = null; if (S.sel && !selItem()) S.sel = null; renderAll(); scheduleSave(); }
+// An undo step is the spec plus what was selected and where the playhead was, so undo puts you back there.
+const snapshot = () => ({ spec: clone(V()), sel: S.sel && { ...S.sel }, multi: S.multi && S.multi.map(r => ({ ...r })), t: S.t });
+function pushHistory(step) { S.history.push(step); if (S.history.length > 200) S.history.shift(); S.future = []; }
+function undo() { if (!S.history.length) return; S.future.push(snapshot()); restore(S.history.pop()); }
+function redo() { if (!S.future.length) return; S.history.push(snapshot()); restore(S.future.pop()); }
+function restore(step) {
+  S.spec = step.spec; S.sel = step.sel; S.multi = step.multi; S.lastKey = null;
+  if (S.sel && !selItem()) S.sel = null;
+  if (S.multi) { S.multi = S.multi.filter(r => listOf(r.kind)?.[r.i]); if (S.multi.length < 2) S.multi = null; }
+  S.player?.pause();
+  renderAll(); markPreviewSelection(); scheduleSave(); seek(step.t);
+}
+// Undo history per video, kept while the editor is open. It is dropped when the video changed on disk in the
+// meantime (a render prefix, a deleted clip), so undo never brings back what the server removed.
+function stashHistory() {
+  if (!V()) return;
+  S.histories[`${S.workspace?.path}:${S.id}`] = { history: S.history, future: S.future, spec: JSON.stringify(V()) };
+}
+function unstashHistory(id) {
+  const h = S.histories[`${S.workspace?.path}:${id}`];
+  const same = h && h.spec === JSON.stringify(V());
+  S.history = same ? h.history : []; S.future = same ? h.future : [];
+}
 
 function scheduleSave(quiet = false) {
   if (!quiet) S.previewDirty = true;
@@ -118,13 +139,61 @@ function scheduleSave(quiet = false) {
 }
 async function flushSave() {
   clearTimeout(S.saveTimer); S.saveTimer = null;
+  S.saving = true;
   try {
     await api(`/api/videos/${S.id}`, { method: 'PUT', body: JSON.stringify(V()) });
     $('#save-state').textContent = 'Opgeslagen'; $('#save-state').className = 'muted';
-    // In tap mode new taps show as markers; the preview is rebuilt once the mode ends.
-    if (S.previewDirty && !S.tapMode) { S.previewDirty = false; reloadPreview(); }
+    // In tap mode new taps show as markers; the preview is rebuilt once the mode ends. While typing, the text is
+    // already patched into the preview; it is rebuilt once the typing stops (liveEdit).
+    if (S.previewDirty && !S.tapMode && !S.liveTimer) { S.previewDirty = false; reloadPreview(); }
   } catch (e) { $('#save-state').textContent = 'Opslaan mislukt'; $('#save-state').className = 'err'; toast(e.message, true); }
+  finally { S.saving = false; }
 }
+// Leaving the page (reload, or closing the browser tab with `npm run serve`): a beacon still arrives after the page
+// is gone. The Electron window flushes through window.__flushSave before it closes (main.mjs).
+function saveOnExit() {
+  const beacon = (url, data) => navigator.sendBeacon(url, new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  if (S.saveTimer && V()) { clearTimeout(S.saveTimer); S.saveTimer = null; beacon(`/api/videos/${S.id}`, V()); }
+  if (S.brandPending) { clearTimeout(S.brandTimer); beacon(`/api/brands/${S.brandPending.id}`, S.brandPending); S.brandPending = null; }
+}
+window.__flushSave = () => Promise.all([S.saveTimer ? flushSave() : null, S.brandPending ? flushBrand() : null]);
+
+// Typing in a text field: put the text straight into the preview that is on screen, and rebuild it only once
+// the typing stops. The rebuild brings back what a patch can't do (word animations, caption timing).
+function liveEdit(patch) {
+  const doc = $('.pv.front')?.contentDocument;
+  try { if (typeof patch === 'function' && doc?.getElementById('root')) patch(doc); } catch (e) { console.warn('live edit:', e.message); }
+  clearTimeout(S.liveTimer);
+  S.liveTimer = setTimeout(() => {
+    S.liveTimer = null;
+    if (S.previewDirty && !S.saveTimer && !S.saving && !S.tapMode) { S.previewDirty = false; reloadPreview(); }
+  }, 1200);
+}
+// The headline markup of src/template.mjs (headHtml), for patching it live.
+function headSpans(text) {
+  let accent = false;
+  return String(text || '').split(' ').map(raw => {
+    let word = raw;
+    if (word.startsWith('*')) { accent = true; word = word.slice(1); }
+    const closes = /\*[^\w]*$/.test(word), em = accent;
+    if (closes) accent = false;
+    const w = document.createElement('span'), wi = document.createElement('span');
+    w.className = `w${em ? ' em' : ''}`; wi.className = 'wi'; wi.textContent = word.replace(/\*/g, '');
+    w.append(wi);
+    return w;
+  }).flatMap((w, k) => (k ? [' ', w] : [w]));
+}
+const liveHead = (id, text) => doc => doc.getElementById(id)?.replaceChildren(...headSpans(text));
+const liveText = (id, text) => doc => { const n = doc.getElementById(id); if (n) n.textContent = text; };
+// The text after an element's icon or mark (the overline, a callout label): its last text node.
+const liveTail = (id, text, sel) => doc => {
+  const n = sel ? doc.getElementById(id)?.querySelector(sel) : doc.getElementById(id);
+  if (!n) return;
+  const last = [...n.childNodes].reverse().find(c => c.nodeType === 3);
+  if (last) last.textContent = text; else n.append(text);
+};
+// Headline ids follow the headlines in time order (like the template builds them), not the order in the spec.
+const headId = i => `h${sortedHeads().findIndex(x => x.i === i)}`;
 
 // ---------- preview (two iframes, swapped when the new one is ready, so edits don't flash) ----------
 function fitStage() {
@@ -179,7 +248,7 @@ function onTime() {
 // Drag callouts directly in the preview; click headlines to select them.
 function wirePreviewDom(doc) {
   const style = doc.createElement('style');
-  style.textContent = '.ms-pick .phone { cursor: crosshair; } .chip { cursor: grab; } .chip.ms-sel { outline: 4px solid #fff; outline-offset: 6px; } h1.head { cursor: pointer; } .cap-bg { cursor: ns-resize; } #captions.ms-sel .cap-bg { outline: 4px dashed #fffa; outline-offset: 12px; }' +
+  style.textContent = 'html { -webkit-user-select: none; user-select: none; } .ms-pick .phone { cursor: crosshair; } .chip { cursor: grab; } .chip.ms-sel { outline: 4px solid #fff; outline-offset: 6px; } h1.head { cursor: pointer; } .cap-bg { cursor: ns-resize; } #captions.ms-sel .cap-bg { outline: 4px dashed #fffa; outline-offset: 12px; }' +
     '.ms-tapmark { position: absolute; width: 0; height: 0; pointer-events: auto; z-index: 30; cursor: grab; transform: scale(var(--mk, 1)); }' +
     '.ms-tapmark::before { content: ""; position: absolute; left: -30px; top: -30px; width: 60px; height: 60px; border-radius: 50%; border: 5px solid #ffffffb0; background: #0006; box-shadow: 0 4px 14px #0008; }' +
     '.ms-tapmark b { position: absolute; left: -30px; top: -30px; width: 60px; height: 60px; display: grid; place-items: center; font: 800 26px system-ui, sans-serif; color: #fff; }' +
@@ -248,7 +317,7 @@ function wirePreviewDom(doc) {
       return;
     }
     const head = pick('h1.head');
-    if (head) { const idx = sortedHeads().findIndex(h => h.i === +head.id.slice(1)); if (idx >= 0) select({ kind: 'head', i: +head.id.slice(1) }, false); return; }
+    if (head) { const h = sortedHeads()[+head.id.slice(1)]; if (h) select({ kind: 'head', i: h.i }, false); return; }
     if (S.t >= END() && pick('#endcard')) return select({ kind: 'end', i: 0 }, false);
     const phone = pick('.phone');
     // With a zoom selected, a click on the device picks its focus point (mapped back through the current zoom).
@@ -273,6 +342,8 @@ function wirePreviewDom(doc) {
       const i = (listOf(kind) || []).findIndex(c => S.t >= c.start && S.t < c.start + c.dur);
       if (i >= 0) select({ kind, i }, false);
     }
+    // The background around the device: deselect.
+    else if (S.sel || S.multi) select(null, false);
   });
   doc.addEventListener('keydown', onKey);
   // After a click in the preview the clipboard shortcuts land in its document; hand them to the editor.
@@ -416,7 +487,7 @@ const estLen = text => Math.max(0.8, plain(text).split(/\s+/).length * 0.36);
 
 // ---------- adding / removing ----------
 function add(kind, extra = {}) {
-  const t = round(S.t);
+  const t = round(extra.t ?? S.t);
   const room = Math.max(1, END() - t);
   let i;
   commit(v => {
@@ -571,31 +642,139 @@ function renderMarks(ruler, pps) {
 // ---------- rendering ----------
 function renderAll() { ensureLists(); renderTimeline(); renderInspector(); renderLibrary(); renderFormatBar(); onTime(); }
 
+// ---------- media pool ----------
+// Two tabs (clips, audio) with a search box. A clip card has the device screen's shape, so it shows what the device
+// will show when the clip fills it; point at it to scrub through it, click to put it at the playhead, or drag it
+// onto the timeline. The media elements are kept between renders, so a re-render doesn't reload every video.
+const fmtLen = s => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${s.toFixed(1)}s`);
+function mediaEl(name) {
+  const key = `${S.workspace?.path}:${name}`;
+  if (S.media[key]) return S.media[key];
+  const src = `/assets/clips/${encodeURIComponent(name)}`;
+  const m = isImage(name) ? el('img', { src, alt: '', draggable: false }) : el('video', { src: `${src}#t=1.2`, muted: true, preload: 'metadata', playsInline: true });
+  if (!isImage(name)) m.addEventListener('loadedmetadata', () => { const had = S.clipDur[name]; S.clipDur[name] = m.duration; if (!had) renderLibrary(); }, { once: true });
+  return (S.media[key] = m);
+}
+function setMediaTab(tab) {
+  S.mediaTab = tab;
+  try { localStorage.setItem('ms-media-tab', tab); } catch {}
+  renderLibrary();
+}
 function renderLibrary() {
+  const q = ($('#media-q')?.value || '').trim().toLowerCase();
+  const match = name => !q || name.toLowerCase().includes(q);
+  const tab = S.mediaTab || 'clips';
+  for (const b of document.querySelectorAll('.media-tabs button')) {
+    b.classList.toggle('on', b.dataset.tab === tab);
+    b.querySelector('b').textContent = (b.dataset.tab === 'clips' ? S.clips : S.audio).length || '';
+  }
+  $('#clip-list').hidden = tab !== 'clips';
+  $('#audio-list').hidden = tab !== 'audio';
+  if (tab === 'clips') renderClips(S.clips.filter(match), q); else renderAudio(S.audio.filter(match), q);
+}
+function emptyDrop(ic, text) {
+  return el('button', { class: 'media-empty', onclick: () => $('#upload').click() }, icon(ic), el('span', {}, text));
+}
+function renderClips(names, q) {
+  const box = $('#clip-list');
+  if (!S.clips.length) return box.replaceChildren(emptyDrop('video_library', 'Sleep schermopnames of screenshots hierheen, of klik om te uploaden'));
+  if (!names.length) return box.replaceChildren(el('p', { class: 'hint media-none' }, `Geen clips met "${q}"`));
   const used = new Set([...(V()?.clips || []), ...(V()?.clips2 || [])].map(c => c.src));
   const screen = screenOf();
-  $('#clip-list').replaceChildren(...S.clips.map(name => {
-    const img = isImage(name);
-    const vid = img ? el('img', { src: `/assets/clips/${name}`, alt: '' }) : el('video', { src: `/assets/clips/${name}#t=1.2`, muted: true, preload: 'metadata', playsInline: true });
-    const dur = el('i', {}, img ? 'foto' : S.clipDur[name] ? `${S.clipDur[name].toFixed(1)}s` : '');
-    const dual = V() && isDual();
-    // The card has the screen's shape, so it shows what the device will show when the clip fills it.
+  const dual = V() && isDual();
+  box.replaceChildren(...names.map(name => {
+    const img = isImage(name), media = mediaEl(name);
     const size = clipSize(name, renderLibrary);
     const f = size && fitInfo({}, size, screen);
     const bad = f && (f.cutX > 0.08 || f.cutY > 0.08 || f.k > 1.2);
-    const card = el('button', { class: `clip-card${used.has(name) ? ' used' : ''}`, style: `aspect-ratio:${screen[0]} / ${screen[1]}`, title: `${name}${size ? ` (${size[0]} × ${size[1]})` : ''}\nKlik: op de playhead in het apparaat zetten${dual ? '\nShift+klik: telefoon 2' : ''}` },
-      vid, dur, el('span', {}, name.replace(/\.\w+$/, '')),
-      bad ? el('b', { class: 'fitw', title: 'Past niet goed in deze layout: er valt veel weg of het wordt flink vergroot. Klik de clip aan voor details.' }, icon('crop')) : null);
+    const len = S.clipDur[name];
+    const scrubLine = el('i', { class: 'scrub' });
+    const card = el('button', {
+      class: 'clip-card', style: `aspect-ratio:${screen[0]} / ${screen[1]}`,
+      title: `${name}${size ? ` (${size[0]} × ${size[1]})` : ''}\nKlik: op de playhead in het apparaat zetten${dual ? '\nShift+klik: telefoon 2' : ''}\nOf sleep naar de tijdlijn`
+    },
+      media, scrubLine,
+      el('span', { class: 'cc-badge cc-len' }, img ? icon('image') : len ? fmtLen(len) : ''),
+      used.has(name) ? el('span', { class: 'cc-badge cc-used', title: 'Gebruikt in deze video' }, icon('check')) : null,
+      bad ? el('b', { class: 'fitw', title: 'Past niet goed in deze layout: er valt veel weg of het wordt flink vergroot. Klik de clip aan voor details.' }, icon('crop')) : null,
+      el('span', { class: 'cc-add' }, icon('add')));
     if (!img) {
-      vid.addEventListener('loadedmetadata', () => { S.clipDur[name] = vid.duration; dur.textContent = `${vid.duration.toFixed(1)}s`; });
-      card.addEventListener('mouseenter', () => { vid.currentTime = 0; vid.play().catch(() => {}); });
-      card.addEventListener('mouseleave', () => { vid.pause(); vid.currentTime = 1.2; });
+      // Scrub: the pointer's position over the card is the position in the clip.
+      card.addEventListener('pointermove', e => {
+        if (!media.duration) return;
+        const r = card.getBoundingClientRect(), k = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        media.currentTime = k * media.duration;
+        scrubLine.style.left = `${k * 100}%`;
+        card.classList.add('scrubbing');
+      });
+      card.addEventListener('pointerleave', () => { card.classList.remove('scrubbing'); media.currentTime = Math.min(1.2, media.duration || 1.2); });
     }
     card.addEventListener('click', e => add(e.shiftKey && dual ? 'clips2' : 'clips', { src: name }));
-    return el('div', { class: 'clip-wrap' }, card,
-      el('button', { class: 'clip-del ghost icon', title: 'Bestand verwijderen', onclick: () => deleteAsset('clips', name) }, icon('delete')));
+    const wrap = el('div', { class: `clip-wrap${used.has(name) ? ' used' : ''}`, draggable: true },
+      card,
+      el('div', { class: 'clip-meta' },
+        el('span', { class: 'nm', title: name }, name.replace(/\.\w+$/, '')),
+        el('button', { class: 'clip-del ghost icon', title: 'Bestand verwijderen', onclick: () => deleteAsset('clips', name) }, icon('delete'))));
+    wrap.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('application/x-ms-clip', name);
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setDragImage(card, card.offsetWidth / 2, 20);
+      S.dragMedia = { kind: 'clip', name, len: img ? 3 : S.clipDur[name] || 4 };
+    });
+    wrap.addEventListener('dragend', () => { S.dragMedia = null; clearDropGhost(); });
+    return wrap;
   }));
-  $('#audio-list').replaceChildren(...(S.audio.length ? S.audio.map(audioItem) : [el('p', { class: 'hint' }, 'Nog geen audio. Upload muziek of een opname (wav, mp3, m4a).')]));
+}
+function renderAudio(names, q) {
+  const box = $('#audio-list');
+  if (!S.audio.length) return box.replaceChildren(emptyDrop('library_music', 'Sleep muziek of een opname hierheen (wav, mp3, m4a), of klik om te uploaden'));
+  if (!names.length) return box.replaceChildren(el('p', { class: 'hint media-none' }, `Geen audio met "${q}"`));
+  box.replaceChildren(...names.map(audioItem));
+}
+
+// Media dragged from the pool onto the timeline: a clip lands on the device row under the pointer (the second phone's
+// row for clips2), audio becomes the music from that point on, or the voice when dropped on the Stem row.
+function dropTarget(e) {
+  const m = S.dragMedia;
+  const row = e.target.closest?.('.tl-row');
+  if (!m || !row || !V()) return null;
+  const t = round(Math.max(0, Math.min(DUR() - 0.1, xToTime(e))));
+  if (m.kind === 'clip') return { t, kind: row.dataset.key === 'clips2' ? 'clips2' : 'clips' };
+  return { t, kind: row.dataset.key === 'audio' ? 'audio' : 'music' };
+}
+function showDropGhost(target) {
+  const m = S.dragMedia;
+  const track = $(`#tl-rows .tl-row[data-key="${target.kind}"] .tl-track`) || $('#tl-rows .tl-row[data-key="clips"] .tl-track');
+  let g = $('#drop-ghost');
+  if (!g) g = el('div', { id: 'drop-ghost' });
+  if (g.parentElement !== track) track.append(g);
+  const start = target.kind === 'audio' ? 0 : target.t;
+  const len = target.kind === 'audio' ? DUR() : Math.min(m.len, DUR() - start);
+  g.style.cssText = `left:${start * S.pps}px;width:${Math.max(6, len * S.pps)}px`;
+  g.textContent = `${m.name.replace(/\.\w+$/, '')} · ${fmt(start)}`;
+}
+function clearDropGhost() { $('#drop-ghost')?.remove(); }
+function wireMediaDrop() {
+  const rowsEl = $('#tl-rows');
+  rowsEl.addEventListener('dragover', e => {
+    const target = dropTarget(e);
+    if (!target) return clearDropGhost();
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    showDropGhost(target);
+  });
+  rowsEl.addEventListener('dragleave', e => { if (!rowsEl.contains(e.relatedTarget)) clearDropGhost(); });
+  rowsEl.addEventListener('drop', e => {
+    const target = dropTarget(e), m = S.dragMedia;
+    clearDropGhost();
+    if (!target) return;
+    e.preventDefault(); e.stopPropagation();
+    S.dragMedia = null;
+    if (m.kind === 'clip') return add(target.kind, { src: m.name, t: target.t });
+    if (target.kind === 'audio') { commit(v => { v.audio = m.name; }); return select({ kind: 'audio', i: 0 }); }
+    commit(v => { v.music = { ...(v.music || {}), src: m.name, start: target.t, media: 0 }; delete v.music.dur; });
+    select({ kind: 'music', i: 0 });
+  });
 }
 
 // Timeline rows are derived from the spec each render.
@@ -635,7 +814,7 @@ function renderTimeline() {
   // ruler
   const ruler = $('#tl-ruler');
   ruler.replaceChildren();
-  const step = pps < 35 ? 2 : 1;
+  const step = pps < 12 ? 5 : pps < 35 ? 2 : 1;
   for (let s = 0; s <= dur + 0.001; s += step) ruler.append(el('div', { class: 'tick', style: `left:${s * pps}px` }, `${s}s`));
   if (pps >= 50) for (let s = 0.5; s < dur; s += 1) ruler.append(el('div', { class: 'tick minor', style: `left:${s * pps}px` }));
   ruler.append(el('div', { class: 'out', style: `left:${dur * pps}px;width:60px` }));
@@ -643,7 +822,9 @@ function renderTimeline() {
   renderMarks(ruler, pps);
 
   const rowsEl = $('#tl-rows');
-  rowsEl.replaceChildren(...rows().map(r => {
+  const R = rows();
+  S.nodes = new Map(); S.rowSig = rowSig(R);
+  rowsEl.replaceChildren(...R.map(r => {
     const h = 34 * (r.lanes || 1);
     const track = el('div', { class: 'tl-track', style: `height:${h}px` });
     track.append(el('div', { class: 'past', style: `left:${dur * pps}px;width:60px` }));
@@ -654,7 +835,7 @@ function renderTimeline() {
         style: `left:${it.s * pps}px;width:${Math.max(6, (it.e - it.s) * pps)}px;top:${3 + (it.lane || 0) * 34}px`,
         title: `${it.text}\n${it.s.toFixed(2)}s → ${it.e.toFixed(2)}s`
       });
-      if (it.kind === 'clips' || it.kind === 'clips2') node.append(el('div', { class: 'thumb' }));
+      if (it.kind === 'clips' || it.kind === 'clips2') node.append(filmstrip(listOf(it.kind)[it.i], (it.e - it.s) * pps));
       if (it.ramp) node.append(el('div', { class: 'ramp', style: `width:${it.ramp * pps}px` }));
       if (it.kind === 'vo' && it.len) node.append(el('div', { class: 'len', style: `width:100%` }));
       if (it.env) node.append(envelopeSvg(it.env, 'env'));
@@ -664,43 +845,110 @@ function renderTimeline() {
         if (!it.noResize) node.append(el('div', { class: 'h l', 'data-edge': 'l' }), el('div', { class: 'h r', 'data-edge': 'r' }));
         node.addEventListener('pointerdown', e => startDrag(e, it));
       }
+      S.nodes.set(itemKey(it), node);
       track.append(node);
     }
-    track.addEventListener('pointerdown', e => { if (e.target === track) { seek(xToTime(e)); scrub(e); } });
-    return el('div', { class: 'tl-row' }, el('div', { class: 'tl-label', style: `height:${h}px` }, icon(r.icon), r.label), track);
+    // An empty spot on a track: deselect, and move the playhead there.
+    track.addEventListener('pointerdown', e => { if (e.target === track) { S.player?.pause(); if (S.sel || S.multi) select(null); seek(xToTime(e)); scrub(e); } });
+    return el('div', { class: 'tl-row', 'data-key': r.key }, el('div', { class: 'tl-label', style: `height:${h}px` }, icon(r.icon), r.label), track);
   }));
   onTime();
 }
+const itemKey = it => `${it.kind}:${it.i}`;
+const rowSig = R => R.map(r => `${r.key}:${r.lanes || 1}:${r.items.length}`).join() + `|${DUR()}|${S.pps}`;
+// While dragging: move the existing blocks instead of rebuilding the timeline. Falls back to a full render when
+// the rows change shape (a callout needs another lane, the video gets longer).
+function layoutTimeline(redraw = []) {
+  const R = rows();
+  if (!S.nodes || rowSig(R) !== S.rowSig) return renderTimeline();
+  for (const r of R) for (const it of r.items) {
+    const node = S.nodes.get(itemKey(it));
+    if (!node) return renderTimeline();
+    node.style.left = `${it.s * S.pps}px`;
+    node.style.width = `${Math.max(6, (it.e - it.s) * S.pps)}px`;
+    node.style.top = `${3 + (it.lane || 0) * 34}px`;
+    if (redraw.includes(itemKey(it))) node.querySelector('.thumb')?.replaceWith(filmstrip(listOf(it.kind)[it.i], (it.e - it.s) * S.pps));
+  }
+  onTime();
+}
+// Clip filmstrips: the frames under each part of a clip on the timeline, drawn from one strip per file.
+function clipThumbs(name) {
+  const key = `${S.workspace?.path}:${name}`;
+  if (key in S.thumbs) return S.thumbs[key];
+  S.thumbs[key] = null;
+  const load = (src, info) => { const img = new Image(); img.onload = () => { S.thumbs[key] = { ...info, img }; renderTimeline(); }; img.src = src; };
+  if (isImage(name)) load(`/assets/clips/${encodeURIComponent(name)}`, { n: 1, step: Infinity });
+  else api(`/api/thumbs/${encodeURIComponent(name)}`).then(info => load(info.src, info)).catch(() => {});
+  return null;
+}
+function filmstrip(c, width) {
+  const th = clipThumbs(c.src);
+  const canvas = el('canvas', { class: 'thumb' });
+  if (!th) return canvas;
+  const h = 26, w = Math.max(1, Math.round(width));
+  const dpr = Math.min(devicePixelRatio || 1, 16000 / w);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const fw = th.img.naturalWidth / th.n, fh = th.img.naturalHeight, tw = Math.max(8, h * fw / fh);
+  const media = c.media || 0, rate = c.rate || 1;
+  for (let x = 0; x < w; x += tw) {
+    const t = media + (x + tw / 2) / S.pps * rate;
+    const k = th.n === 1 ? 0 : Math.max(0, Math.min(th.n - 1, Math.round(t / th.step)));
+    ctx.drawImage(th.img, k * fw, 0, fw, fh, x, 0, tw, h);
+  }
+  return canvas;
+}
 const xToTime = e => (e.clientX - $('#tl-rows .tl-track').getBoundingClientRect().left) / S.pps;
+// Drag the playhead (on the ruler, an empty track or the red handle). preventDefault keeps the browser from
+// selecting text on the way; the body class keeps the cursor while the pointer is elsewhere.
 function scrub(e) {
+  e.preventDefault();
+  document.body.classList.add('tl-scrubbing');
   const move = ev => seek(xToTime(ev));
-  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); document.body.classList.remove('tl-scrubbing'); };
   addEventListener('pointermove', move); addEventListener('pointerup', up);
 }
 
-// Drag to move, drag an edge to trim. Snaps to the playhead and to other items' edges.
+// Drag to move, drag an edge to trim. Snaps to the playhead, markers, beats and other items' edges; hold Alt to
+// place freely. Dragging one of several selected items moves them all. Near the edge of the view it scrolls along.
 function startDrag(e, it) {
   e.preventDefault(); e.stopPropagation();
   if ((e.ctrlKey || e.metaKey || e.shiftKey) && COPYABLE.includes(it.kind)) return toggleMulti({ kind: it.kind, i: it.i });
   if (it.noMove) return select({ kind: it.kind, i: it.i ?? 0 });
   S.player?.pause();
   const edge = e.target.dataset.edge || 'move';
-  const x0 = e.clientX;
-  const before = clone(V());
+  const sc = $('#tl-scroll');
+  const x0 = e.clientX + sc.scrollLeft;
+  const group = edge === 'move' && S.multi?.length > 1 && isSelected(it) ? S.multi.map(r => ({ ...r, o: clone(listOf(r.kind)[r.i]) })) : null;
   const orig = clone(it.kind === 'end' ? { end: END(), dur: DUR() } : it.kind === 'music' ? { ...musicDefaults, ...V().music, dur: it.e - it.s } : listOf(it.kind)[it.i]);
+  const own = new Set(group ? group.map(itemKey) : [itemKey(it)]);
   const snaps = [0, S.t, END(), DUR(), ...(V().markers || []).map(m => m.t), ...(S.snapBeats ? beatTimes() : [])];
-  for (const r of rows()) for (const o of r.items) if (!(o.kind === it.kind && o.i === it.i)) snaps.push(o.s, o.e);
-  const snap = x => { let best = x, d = 7 / S.pps; for (const s of snaps) if (Math.abs(s - x) < d) { d = Math.abs(s - x); best = s; } return round(best); };
-  let moved = false;
-  if (!(S.sel && S.sel.kind === it.kind && S.sel.i === it.i)) { S.sel = { kind: it.kind, i: it.i }; renderInspector(); }
+  for (const r of rows()) for (const o of r.items) if (!own.has(itemKey(o))) snaps.push(o.s, o.e);
+  let free = false;
+  const snap = x => { if (free) return round(x); let best = x, d = 7 / S.pps; for (const s of snaps) if (Math.abs(s - x) < d) { d = Math.abs(s - x); best = s; } return round(best); };
+  let moved = false, last = null;
+  if (!group && !(S.sel && S.sel.kind === it.kind && S.sel.i === it.i)) { S.sel = { kind: it.kind, i: it.i }; S.multi = null; renderInspector(); renderTimeline(); }
+  const before = snapshot(); // after selecting: undo keeps the dragged block selected
+  document.body.classList.add(edge === 'move' ? 'tl-dragging' : 'tl-trimming');
 
   const move = ev => {
-    const dt = (ev.clientX - x0) / S.pps;
-    if (!moved && Math.abs(ev.clientX - x0) < 3) return;
+    last = { clientX: ev.clientX, altKey: ev.altKey }; free = ev.altKey;
+    const x = ev.clientX + sc.scrollLeft;
+    if (!moved && Math.abs(x - x0) < 3) return;
     moved = true;
+    const dt = (x - x0) / S.pps;
     const v = V(), o = orig;
     const len = it.e - it.s;
     const snapMove = s => { const a = snap(s), b = snap(s + len); return Math.abs(a - s) <= Math.abs(b - s - len) ? a : round(b - len); };
+    if (group) {
+      // The dragged block snaps; the others keep their distance to it, and nothing goes before 0.
+      const low = Math.min(...group.map(g => startOf(g.kind, g.o) - (g.kind === 'tap' ? 0.25 : 0)));
+      const d = Math.max(-low, snapMove(it.s + dt) - it.s);
+      for (const g of group) shiftItem(listOf(g.kind)[g.i], g.o, d);
+      return layoutTimeline(group.filter(g => g.kind === 'clips' || g.kind === 'clips2').map(itemKey));
+    }
+    let at = null; // the time under a trimmed edge, shown in the preview
     switch (it.kind) {
       case 'head': v.heads[it.i].t = Math.max(0, snapMove(o.t + dt)); break;
       case 'tap': v.taps[it.i].t = Math.max(0.25, snap(o.t + dt)); break;
@@ -709,22 +957,22 @@ function startDrag(e, it) {
         const c = v[it.kind][it.i], rate = o.rate || 1;
         if (edge === 'move') c.start = Math.max(0, snapMove(o.start + dt));
         const still = isImage(c.src), media = o.media || 0;
-        if (edge === 'l') { const s = Math.min(snap(o.start + dt), o.start + o.dur - 0.1); const d = still ? s : Math.max(s, o.start - media / rate); c.start = round(Math.max(0, d)); c.dur = round(o.dur - (c.start - o.start)); if (!still) c.media = round(Math.max(0, media + (c.start - o.start) * rate)); }
-        if (edge === 'r') { const d = snap(o.start + o.dur + dt) - o.start; const max = !still && S.clipDur[c.src] ? (S.clipDur[c.src] - media) / rate : Infinity; c.dur = round(Math.max(0.1, Math.min(d, max))); }
+        if (edge === 'l') { const s = Math.min(snap(o.start + dt), o.start + o.dur - 0.1); const d = still ? s : Math.max(s, o.start - media / rate); c.start = round(Math.max(0, d)); c.dur = round(o.dur - (c.start - o.start)); if (!still) c.media = round(Math.max(0, media + (c.start - o.start) * rate)); at = c.start; }
+        if (edge === 'r') { const d = snap(o.start + o.dur + dt) - o.start; const max = !still && S.clipDur[c.src] ? (S.clipDur[c.src] - media) / rate : Infinity; c.dur = round(Math.max(0.1, Math.min(d, max))); at = c.start + c.dur - 1 / FPS; }
         break;
       }
       case 'chips': case 'sub': {
         const c = listOf(it.kind)[it.i];
         if (edge === 'move') { c.t = Math.max(0, snapMove(o.t + dt)); c.out = round(c.t + (o.out - o.t)); }
-        if (edge === 'l') c.t = Math.min(snap(o.t + dt), o.out - 0.3);
-        if (edge === 'r') c.out = Math.max(snap(o.out + dt), o.t + 0.3);
+        if (edge === 'l') at = c.t = Math.min(snap(o.t + dt), o.out - 0.3);
+        if (edge === 'r') { c.out = Math.max(snap(o.out + dt), o.t + 0.3); at = c.out - 1 / FPS; }
         break;
       }
       case 'zoom': {
         const z = v.zooms[it.i], out = o.out ?? END();
         if (edge === 'move') { z.t = Math.max(0, snapMove(o.t + dt)); if (o.out != null) z.out = round(z.t + (o.out - o.t)); }
-        if (edge === 'l') z.t = Math.min(snap(o.t + dt), out - z.dur);
-        if (edge === 'r') { const x = snap(out + dt); z.out = x >= END() - 0.05 ? undefined : Math.max(x, z.t + z.dur); }
+        if (edge === 'l') at = z.t = Math.min(snap(o.t + dt), out - z.dur);
+        if (edge === 'r') { const x = snap(out + dt); z.out = x >= END() - 0.05 ? undefined : Math.max(x, z.t + z.dur); at = (z.out ?? END()) - 1 / FPS; }
         break;
       }
       case 'music': {
@@ -745,17 +993,93 @@ function startDrag(e, it) {
         break;
       }
     }
-    renderTimeline();
+    // The music's envelope and the end card's length change the drawing itself: those rebuild.
+    if (it.kind === 'music' || it.kind === 'end') renderTimeline(); else layoutTimeline(it.kind === 'clips' || it.kind === 'clips2' ? [itemKey(it)] : []);
+    // Trimming: the playhead rides along with the edge, so the preview shows the frame you cut on.
+    if (at != null) seek(Math.max(0, at));
   };
+  // Auto-scroll while the pointer is near either side of the visible timeline.
+  const scroll = () => {
+    if (!last || !moved) return;
+    const r = sc.getBoundingClientRect(), left = r.left + 128, zone = 40;
+    const k = last.clientX < left + zone ? (last.clientX - left - zone) / zone : last.clientX > r.right - zone ? (last.clientX - r.right + zone) / zone : 0;
+    if (!k) return;
+    const x = sc.scrollLeft;
+    sc.scrollLeft = x + Math.max(-1.5, Math.min(1.5, k)) * 14;
+    if (sc.scrollLeft !== x) move(last);
+  };
+  const timer = setInterval(scroll, 16);
+  // Pressing or letting go of Alt mid-drag switches snapping right away.
+  const key = ev => { if (ev.key === 'Alt') { ev.preventDefault(); if (last && moved) move({ ...last, altKey: ev.type === 'keydown' }); } };
   const up = () => {
     removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+    removeEventListener('keydown', key); removeEventListener('keyup', key);
+    clearInterval(timer);
+    document.body.classList.remove('tl-dragging', 'tl-trimming');
     if (moved) {
-      S.history.push(before); S.future = []; S.lastKey = null;
-      if (it.kind === 'clips' || it.kind === 'clips2') V()[it.kind].sort((a, b) => a.start - b.start);
-      renderAll(); scheduleSave();
-    } else select({ kind: it.kind, i: it.i });
+      pushHistory(before); S.lastKey = null;
+      sortClips();
+      renderAll(); markPreviewSelection(); scheduleSave();
+    } else if (!group) select({ kind: it.kind, i: it.i });
   };
   addEventListener('pointermove', move); addEventListener('pointerup', up);
+  addEventListener('keydown', key); addEventListener('keyup', key);
+}
+// Shift an item (clip, callout, text, …) by d seconds from its original o.
+function shiftItem(x, o, d) {
+  if ('start' in o) x.start = round(o.start + d);
+  if (o.t != null) x.t = round(o.t + d);
+  if (o.out != null) x.out = round(o.out + d);
+}
+// Clips are kept in time order; the selection follows its clips to their new places.
+function sortClips() {
+  for (const kind of ['clips', 'clips2']) {
+    const list = V()[kind];
+    if (!list?.length) continue;
+    const refs = [S.sel, ...(S.multi || [])].filter(r => r?.kind === kind);
+    const objs = refs.map(r => list[r.i]);
+    list.sort((a, b) => a.start - b.start);
+    refs.forEach((r, k) => (r.i = list.indexOf(objs[k])));
+  }
+}
+// , and . (or Alt+← / →) move the selection by a frame, with Shift by ten.
+function nudge(frames) {
+  const refs = selectedRefs();
+  if (!refs.length) return;
+  const low = Math.min(...refs.map(r => startOf(r.kind, listOf(r.kind)[r.i]) - (r.kind === 'tap' ? 0.25 : 0)));
+  // Steps land on the frame grid (times are kept to 1/100 s), so ten nudges are exactly ten frames.
+  const s0 = startOf(S.sel?.kind ?? refs[0].kind, listOf(S.sel?.kind ?? refs[0].kind)[S.sel?.i ?? refs[0].i]);
+  const d = Math.max(-low, (Math.round(s0 * FPS) + frames) / FPS - s0);
+  if (!d) return;
+  commit(() => { for (const r of refs) { const x = listOf(r.kind)[r.i]; shiftItem(x, clone(x), d); } sortClips(); }, { key: 'nudge' });
+  markPreviewSelection();
+}
+// Shift+Delete on clips: remove them and pull the later clips on the same track back, so no gap is left.
+function rippleDelete() {
+  const refs = selectedRefs().filter(r => r.kind === 'clips' || r.kind === 'clips2');
+  if (!refs.length) return removeSel();
+  commit(v => {
+    for (const kind of ['clips', 'clips2']) {
+      const list = v[kind];
+      const gone = refs.filter(r => r.kind === kind).map(r => list[r.i]).sort((a, b) => b.start - a.start);
+      for (const c of gone) {
+        list.splice(list.indexOf(c), 1);
+        for (const x of list) if (x.start >= c.start + c.dur - 0.001) x.start = round(Math.max(0, x.start - c.dur));
+      }
+    }
+  });
+  S.sel = null; S.multi = null; renderAll(); markPreviewSelection();
+  toast(`${refs.length} clip${refs.length > 1 ? 's' : ''} verwijderd, de rest is aangeschoven`);
+}
+// Fit the whole video in the visible part of the timeline (\).
+function fitTimeline() {
+  if (!V()) return;
+  const sc = $('#tl-scroll');
+  S.pps = Math.max(8, Math.min(240, (sc.clientWidth - 128 - 76) / DUR()));
+  $('#tl-zoom').value = S.pps;
+  try { localStorage.setItem('ms-pps', String(S.pps)); } catch {}
+  renderTimeline();
+  sc.scrollLeft = 0;
 }
 
 // ---------- inspector ----------
@@ -767,6 +1091,8 @@ function field(label, value, onInput, opts = {}) {
     let val = input.value;
     if (type === 'number') { if (val === '') { if (!opts.optional) return; val = undefined; } else { val = +val; if (Number.isNaN(val)) return; } }
     commit(v => onInput(val, v), { key: key || label + JSON.stringify(S.sel), refresh: 'timeline' });
+    // live: text that can go straight into the preview (or `true`: nothing to patch, just rebuild once typing stops).
+    if (opts.live) liveEdit(typeof opts.live === 'function' && opts.live(val));
     opts.after?.();
   });
   return el('label', { class: 'field' }, el('span', {}, label), input);
@@ -813,7 +1139,7 @@ function renderInspector() {
   if (!it) content = videoPanel();
   else if (k === 'head') content = [
     head('title', 'Tekst', el('span', { class: 'muted' }, it.hook ? 'hook' : '')),
-    field('Tekst', it.text, (x, v) => (v.heads[i].text = x), { textarea: true }),
+    field('Tekst', it.text, (x, v) => (v.heads[i].text = x), { textarea: true, live: x => liveHead(headId(i), x) }),
     el('p', { class: 'hint' }, 'Zet *sterretjes* om woorden heen voor de accentkleur. Blijft staan tot de volgende tekst.'),
     field('Start (s)', it.t, (x, v) => (v.heads[i].t = x), { type: 'number', step: 0.05, min: 0 }),
     check('Hook (grotere tekst, voor de opening)', it.hook, (x, v) => { if (x) v.heads[i].hook = true; else delete v.heads[i].hook; }),
@@ -844,7 +1170,7 @@ function renderInspector() {
   ];
   else if (k === 'vo') content = [
     head('record_voice_over', 'Voice-over zin'),
-    field('Tekst', it.text, (x, v) => { v.vo.lines[i].text = x; delete v.vo.lines[i].len; }, { textarea: true }),
+    field('Tekst', it.text, (x, v) => { v.vo.lines[i].text = x; delete v.vo.lines[i].len; }, { textarea: true, live: true }),
     field('Start (s)', it.t, (x, v) => (v.vo.lines[i].t = x), { type: 'number', step: 0.05, min: 0 }),
     el('p', { class: 'hint' }, it.len ? `Ingesproken lengte: ${it.len.toFixed(2)}s.` : 'Nog niet ingesproken. Klik op "Voice-over maken" om hem te genereren.'),
     el('button', { class: 'primary', onclick: generateVo }, icon('graphic_eq'), 'Voice-over maken'),
@@ -872,7 +1198,7 @@ function renderInspector() {
   else if (k === 'music') content = musicPanel(it);
   else if (k === 'sub') content = [
     head('subtitles', 'Ondertitel', V().captions?.off ? el('span', { class: 'muted' }, 'verborgen') : null),
-    field('Tekst', it.text, (x, v) => (v.subs[i].text = x), { textarea: true }),
+    field('Tekst', it.text, (x, v) => (v.subs[i].text = x), { textarea: true, live: true }),
     el('p', { class: 'hint' }, `*Sterretjes* = accentkleur. De woorden worden over de duur van het blok verdeeld en verschijnen ${captionStyle(brandOf(), V()).words} per keer.`),
     el('div', { class: 'field-row' },
       field('In (s)', it.t, (x, v) => (v.subs[i].t = x), { type: 'number', step: 0.05, min: 0 }),
@@ -885,13 +1211,15 @@ function renderInspector() {
   ];
   else if (k === 'end') content = [
     head('flag', 'Eindkaart'),
-    field('Slogan', it.tagline, (x, v) => (v.tagline = x)),
+    field('Slogan', it.tagline, (x, v) => (v.tagline = x), { live: x => liveHead('end-tag', x) }),
     el('p', { class: 'hint' }, '*Sterretjes* = accentkleur.'),
     el('div', { class: 'field-row' },
       field('Begint op (s)', END(), (x, v) => (v.end = x), { type: 'number', step: 0.05, min: 1 }),
       field('Video eindigt op (s)', DUR(), (x, v) => (v.dur = x), { type: 'number', step: 0.05, min: 1 }))
   ];
   box.replaceChildren(...[content].flat().filter(Boolean));
+  // A way out of every selection (the tap markers in the preview, for one, only show while a tap is selected).
+  if (S.sel && S.sel.kind !== 'brand') box.querySelector('.insp-head')?.append(el('button', { class: 'ghost icon insp-close', title: 'Selectie opheffen (Esc)', onclick: () => select(null) }, icon('close')));
 }
 
 const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen' };
@@ -903,7 +1231,7 @@ function videoPanel() {
   const layout = layoutOf();
   return [
     head('movie', v.id),
-    field('Bovenregel', v.overline, (x, v) => (v.overline = x)),
+    field('Bovenregel', v.overline, (x, v) => (v.overline = x), { live: x => liveTail('overline', `${brandOf().name}${x ? ` · ${x}` : ''}`) }),
     el('label', { class: 'field' }, el('span', {}, 'Merk'),
       el('div', { class: 'path-row' },
         (() => { const s = el('select', {}, ...S.brands.map(b => el('option', { value: b.id }, b.name + (b.id === S.workspace.defaultBrand ? ' (standaard)' : '')))); s.value = brand.id; s.onchange = () => commit(v => { v.brand = s.value; }); return s; })(),
@@ -927,10 +1255,10 @@ function videoPanel() {
     el('div', { class: 'field-row' },
       field('Lengte (s)', DUR(), (x, v) => (v.dur = x), { type: 'number', step: 0.1, min: 2 }),
       field('Eindkaart vanaf (s)', END(), (x, v) => (v.end = x), { type: 'number', step: 0.1, min: 1 })),
-    field('Eindkaart slogan', v.tagline, (x, v) => (v.tagline = x)),
+    field('Eindkaart slogan', v.tagline, (x, v) => (v.tagline = x), { live: x => liveHead('end-tag', x) }),
     layout === 'dual' ? el('div', { class: 'field-row' },
-      field('Naam links', v.names?.[0] ?? 'Alex', (x, v) => { v.names = [x, v.names?.[1] ?? 'Jordan']; }),
-      field('Naam rechts', v.names?.[1] ?? 'Jordan', (x, v) => { v.names = [v.names?.[0] ?? 'Alex', x]; })) : null,
+      field('Naam links', v.names?.[0] ?? 'Alex', (x, v) => { v.names = [x, v.names?.[1] ?? 'Jordan']; }, { live: true }),
+      field('Naam rechts', v.names?.[1] ?? 'Jordan', (x, v) => { v.names = [v.names?.[0] ?? 'Alex', x]; }, { live: true })) : null,
     el('div', { class: 'insp-section' },
       el('h3', {}, 'Audio & voice-over'),
       el('div', { class: 'field-row' },
@@ -973,12 +1301,15 @@ function audioLen(name) {
   if (!name || S.audioDur[name]) return;
   const a = new Audio(`/assets/vo/${encodeURIComponent(name)}`);
   a.preload = 'metadata';
-  a.onloadedmetadata = () => { S.audioDur[name] = a.duration; if (S.sel?.kind === 'music') renderInspector(); };
+  a.onloadedmetadata = () => { S.audioDur[name] = a.duration; if (S.sel?.kind === 'music') renderInspector(); if (S.mediaTab === 'audio') renderLibrary(); };
 }
 function audioItem(a) {
   const v = V();
   const role = v?.audio === a ? 'stem' : v?.music?.src === a ? 'muziek' : '';
-  const play = el('button', { class: 'ghost icon', title: 'Beluisteren' }, icon(S.listening?.name === a ? 'stop' : 'play_arrow'));
+  audioLen(a);
+  const len = S.audioDur[a];
+  const playing = S.listening?.name === a;
+  const play = el('button', { class: `au-play${playing ? ' on' : ''}`, title: playing ? 'Stoppen' : 'Beluisteren' }, icon(playing ? 'stop' : 'play_arrow'));
   play.onclick = () => {
     const cur = S.listening;
     cur?.audio.pause(); S.listening = null;
@@ -990,11 +1321,23 @@ function audioItem(a) {
     }
     renderLibrary();
   };
-  return el('div', { class: `audio-item${role ? ' used' : ''}` }, play,
-    el('span', { class: 'name', title: a }, a), role ? el('i', {}, role) : null,
-    v ? el('button', { class: 'ghost icon', title: 'Als muziek onder de video', onclick: () => { commit(v => { v.music = { ...(v.music || {}), src: a, media: 0 }; delete v.music.dur; }); select({ kind: 'music', i: 0 }); } }, icon('queue_music')) : null,
-    v ? el('button', { class: 'ghost icon', title: 'Als stem / audiospoor', onclick: () => { commit(v => { v.audio = a; }); select({ kind: 'audio', i: 0 }); } }, icon('record_voice_over')) : null,
-    el('button', { class: 'ghost icon danger', title: 'Bestand verwijderen', onclick: () => deleteAsset('vo', a) }, icon('delete')));
+  const row = el('div', { class: `audio-item${role ? ' used' : ''}${playing ? ' playing' : ''}`, draggable: !!v, title: v ? `${a}\nSleep naar de tijdlijn: muziek vanaf dat punt (op de rij Stem: als stem)` : a },
+    play,
+    el('div', { class: 'au-main' },
+      el('span', { class: 'name' }, a.replace(/\.\w+$/, '')),
+      el('span', { class: 'au-sub' }, [len ? fmtLen(len) : '', a.match(/\.(\w+)$/)?.[1]?.toUpperCase()].filter(Boolean).join(' · '))),
+    role ? el('i', { class: 'au-role' }, role) : null,
+    el('div', { class: 'au-actions' },
+      v ? el('button', { class: 'ghost icon', title: 'Als muziek onder de video', onclick: () => { commit(v => { v.music = { ...(v.music || {}), src: a, media: 0 }; delete v.music.dur; }); select({ kind: 'music', i: 0 }); } }, icon('queue_music')) : null,
+      v ? el('button', { class: 'ghost icon', title: 'Als stem / audiospoor', onclick: () => { commit(v => { v.audio = a; }); select({ kind: 'audio', i: 0 }); } }, icon('record_voice_over')) : null,
+      el('button', { class: 'ghost icon danger', title: 'Bestand verwijderen', onclick: () => deleteAsset('vo', a) }, icon('delete'))));
+  row.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('application/x-ms-audio', a);
+    e.dataTransfer.effectAllowed = 'copy';
+    S.dragMedia = { kind: 'audio', name: a, len: len || 4 };
+  });
+  row.addEventListener('dragend', () => { S.dragMedia = null; clearDropGhost(); });
+  return row;
 }
 function musicPanel(it) {
   const v = V(), m = { ...musicDefaults, ...it }, mix = musicMix(v);
@@ -1137,13 +1480,18 @@ function splitAtPlayhead() {
 function saveBrand(b) {
   $('#save-state').textContent = 'Merk opslaan…'; $('#save-state').className = 'busy';
   clearTimeout(S.brandTimer);
-  S.brandTimer = setTimeout(async () => {
-    try {
-      await api(`/api/brands/${b.id}`, { method: 'PUT', body: JSON.stringify(b) });
-      $('#save-state').textContent = 'Opgeslagen'; $('#save-state').className = 'muted';
-      if (V()) reloadPreview();
-    } catch (e) { toast(e.message, true); }
-  }, 350);
+  S.brandPending = b;
+  S.brandTimer = setTimeout(flushBrand, 350);
+}
+async function flushBrand() {
+  const b = S.brandPending;
+  clearTimeout(S.brandTimer); S.brandTimer = null; S.brandPending = null;
+  if (!b) return;
+  try {
+    await api(`/api/brands/${b.id}`, { method: 'PUT', body: JSON.stringify(b) });
+    $('#save-state').textContent = 'Opgeslagen'; $('#save-state').className = 'muted';
+    if (V()) reloadPreview();
+  } catch (e) { toast(e.message, true); }
 }
 const BRAND_COLORS = [['bg', 'Achtergrond'], ['text', 'Tekst'], ['accent', 'Accent'], ['accentInk', 'Tekst op accent'], ['markBg', 'Logo-vlak'], ['markInk', 'Logo-kleur'], ['glow', 'Gloed'], ['glow2', 'Gloed 2'], ['orbit', 'Ring'], ['orbit2', 'Ring 2'], ['deviceGlow', 'Apparaat-gloed'], ['deviceRing', 'Apparaat-rand']];
 function brandPanel() {
@@ -1449,8 +1797,8 @@ function chipPanel(i, c) {
     head('sell', 'Callout'),
     demo,
     el('div', { class: 'field-row' },
-      field('Label (klein)', c.label, (x, v) => (v.chips[i].label = x), { after: refresh }),
-      field('Tekst', c.text, (x, v) => (v.chips[i].text = x), { after: refresh })),
+      field('Label (klein)', c.label, (x, v) => (v.chips[i].label = x), { after: refresh, live: x => liveTail(`chip${i}`, x, '.chip-label') }),
+      field('Tekst', c.text, (x, v) => (v.chips[i].text = x), { after: refresh, live: x => V().chips[i].count != null || liveText(`chip${i}-text`, x) })),
     el('label', { class: 'field' }, el('span', {}, 'Kleur'), el('div', { class: 'swatches' }, ...Object.entries(palette).map(([name, [b]]) =>
       el('button', { class: `swatch${c.color === name ? ' on' : ''}`, style: `background:${b}`, title: name, onclick: () => commit(v => (v.chips[i].color = name)) })))),
     el('label', { class: 'field' }, el('span', {}, 'Icoon'),
@@ -1477,32 +1825,108 @@ function chipPanel(i, c) {
 }
 
 // ---------- jobs ----------
-async function runJob(kind, title, { id = S.id, body } = {}) {
+// One dialog for every long job: a header with its state, the progress with a chip per step and the time left,
+// the log folded away (opened when something goes wrong) and the result below.
+const fmtBytes = n => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`;
+const fmtClock = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const JOB_STATES = { running: ['Bezig', 'progress_activity'], done: ['Klaar', 'check_circle'], error: ['Mislukt', 'error'], cancelled: ['Gestopt', 'stop_circle'] };
+function jobState(state) {
+  const [label, ic] = JOB_STATES[state] || JOB_STATES.running;
+  $('#job-state').className = `job-state s-${state}`;
+  $('#job-state').replaceChildren(icon(ic), label);
+  $('#dlg-job').dataset.state = state;
+}
+// steps: a label per step; step(job) → { at, text }: the step running now and a line about it.
+async function runJob(kind, title, { id = S.id, body, sub = '', ic = 'movie', steps = [], step = () => null } = {}) {
   if (S.saveTimer) await flushSave();
-  const dlg = $('#dlg-job');
-  $('#job-title').textContent = title;
-  $('#job-log').textContent = ''; $('#job-result').replaceChildren(); $('#job-bar').style.width = '0';
+  const dlg = $('#dlg-job'), log = $('#job-log');
+  dlg.classList.remove('has-result');
+  $('#job-title').textContent = title; $('#job-sub').textContent = sub; $('#job-icon').textContent = ic;
+  log.textContent = ''; $('#job-result').replaceChildren(); $('#job-bar').style.width = '0';
+  $('#job-pct').textContent = '0%'; $('#job-step').textContent = ''; $('#job-time').textContent = '';
+  $('#job-details').open = false; $('#job-run').hidden = false; $('#job-reveal').hidden = true;
+  const stop = $('#job-stop');
+  stop.hidden = kind === 'vo'; stop.disabled = false;
+  stop.onclick = () => { stop.disabled = true; api(`/api/${kind}/${id}`, { method: 'DELETE' }).catch(() => {}); };
+  const chips = steps.map(s => el('span', { class: 'job-chip' }, el('i'), el('span', { class: kind === 'batch' ? 'no-i18n' : '' }, s)));
+  $('#job-steps').replaceChildren(...chips);
+  jobState('running');
   dlg.showModal();
-  try { await api(`/api/${kind}/${id}`, { method: 'POST', ...(body && { body: JSON.stringify(body) }) }); } catch (e) { $('#job-log').textContent = e.message; return; }
+  const end = job => { stop.hidden = true; jobState(job.state); if (job.state === 'error') $('#job-details').open = true; return job; };
+  try { await api(`/api/${kind}/${id}`, { method: 'POST', ...(body && { body: JSON.stringify(body) }) }); } catch (e) { log.textContent = e.message; end({ state: 'error' }); return; }
   for (;;) {
     await new Promise(r => setTimeout(r, 800));
     const job = await api(`/api/${kind}/${id}`);
-    $('#job-bar').style.width = `${job.progress || 3}%`;
-    const log = $('#job-log');
+    const pct = Math.floor(job.state === 'done' ? 100 : job.progress || 0);
+    $('#job-bar').style.width = `${Math.max(2, pct)}%`;
+    $('#job-pct').textContent = `${pct}%`;
+    const now = step(job);
+    chips.forEach((c, k) => (c.className = `job-chip${job.state === 'done' || k < (now?.at ?? -1) ? ' done' : k === now?.at ? ' now' : ''}`));
+    $('#job-step').textContent = now?.text || '';
+    const spent = (job.finished || Date.now()) - job.started;
+    $('#job-time').textContent = job.state === 'running' && pct >= 4 ? `nog ~${fmtClock(spent * (100 - pct) / pct)} · ${fmtClock(spent)} verstreken` : `${fmtClock(spent)} verstreken`;
+    const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
     log.textContent = (job.log || []).join('\n');
-    log.scrollTop = log.scrollHeight;
-    if (job.state !== 'running') return job;
+    if (atEnd) log.scrollTop = log.scrollHeight;
+    if (job.state !== 'running') return end(job);
   }
 }
-const fileLinks = files => files.flatMap((f, n) => [n ? ', ' : '', el('a', { href: `/renders/${f}`, download: f }, f)]);
+
+// The finished files: a player on the left, the files per video on the right (click one to watch it).
+function showOutputs(job, results) {
+  const ok = results.filter(r => r.outputs?.length);
+  if (!ok.length) return;
+  const video = el('video', { controls: true, autoplay: true, muted: true, loop: true, playsInline: true });
+  const frame = el('div', { class: 'out-frame' }, video);
+  const rows = [];
+  const play = (o, row) => {
+    video.src = `/renders/${encodeURIComponent(o.file)}?${job.finished}`;
+    frame.style.cssText = `aspect-ratio:${o.w} / ${o.h};${o.w / o.h > 1.2 ? 'width:100%' : 'height:100%'}`;
+    rows.forEach(r => r.classList.toggle('on', r === row));
+  };
+  const download = f => el('a', { class: 'icon', href: `/renders/${encodeURIComponent(f)}`, download: f, title: 'Downloaden', onclick: e => e.stopPropagation() }, icon('download'));
+  const fmtIcon = (w, h) => el('span', { class: 'fmt-ico' }, el('i', { style: `width:${Math.round(w >= h ? 20 : 20 * w / h)}px;height:${Math.round(h >= w ? 20 : 20 * h / w)}px` }));
+  const list = [];
+  for (const r of results) {
+    if (results.length > 1) list.push(el('div', { class: 'out-group' }, icon(r.error ? 'error' : 'movie'), el('span', { class: 'no-i18n' }, r.id)));
+    if (r.error) { list.push(el('div', { class: 'out-row err' }, el('span', { class: 'fmt-ico' }, icon('error')), el('div', { class: 'txt' }, el('b', {}, 'Mislukt'), el('small', { class: 'no-i18n', title: r.error }, r.error)))); continue; }
+    for (const o of r.outputs || []) {
+      const row = el('div', { class: 'out-row', tabindex: 0, title: 'Bekijken' },
+        fmtIcon(o.w, o.h),
+        el('div', { class: 'txt' }, el('b', {}, S.formats?.[o.format]?.label || o.format), el('small', { class: 'no-i18n' }, `${o.w} × ${o.h} · ${fmtBytes(o.size)}`), el('small', { class: 'no-i18n' }, o.file)),
+        download(o.file));
+      row.onclick = () => play(o, row);
+      row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); play(o, row); } };
+      rows.push(row); list.push(row);
+    }
+    if (r.srt) list.push(el('div', { class: 'out-row plain' }, el('span', { class: 'fmt-ico' }, icon('subtitles')),
+      el('div', { class: 'txt' }, el('b', {}, 'Ondertitels (.srt)'), el('small', { class: 'no-i18n' }, r.srt)), download(r.srt)));
+  }
+  const bytes = ok.flatMap(r => r.outputs).reduce((n, o) => n + o.size, 0);
+  const stat = (value, label) => el('div', { class: 'out-stat' }, el('b', { class: 'no-i18n' }, value), el('span', {}, label));
+  $('#job-result').replaceChildren(el('div', { class: 'out' },
+    el('div', { class: 'out-stage' }, frame),
+    el('div', { class: 'out-side' },
+      el('div', { class: 'out-stats' }, stat(fmtClock(job.finished - job.started), 'Rendertijd'), stat(fmtBytes(bytes), 'Totaal'),
+        stat(String(ok.reduce((n, r) => n + r.outputs.length, 0)), 'Bestanden')),
+      el('div', { class: 'out-list' }, ...list),
+      el('p', { class: 'out-hint' }, icon('folder'), el('span', {}, S.settings.copyToDownloads !== false ? 'In renders/ en in Downloads.' : 'In de map renders/ van dit project.')))));
+  $('#dlg-job').classList.add('has-result');
+  $('#job-run').hidden = true;
+  $('#job-reveal').hidden = false;
+  $('#job-reveal').onclick = revealRenders;
+  play(ok[0].outputs[0], rows[0]);
+}
+const videoFormats = (v = V()) => { const f = (v?.formats || []).filter(k => S.formats?.[k]); return f.length ? f : ['9:16']; };
 async function renderMp4() {
-  const job = await runJob('render', `Renderen: ${S.id}`);
-  if (job?.state === 'done') {
-    const { file, files = [file], srt } = job.result;
-    $('#job-result').replaceChildren(
-      el('video', { src: `/renders/${file}?${Date.now()}`, controls: true }),
-      el('p', {}, 'Klaar! ', fileLinks([...files, ...(srt ? [srt] : [])]), ` staan in renders/${S.settings.copyToDownloads !== false ? ' en in Downloads' : ''}.`));
-  } else if (job) $('#job-result').replaceChildren(el('p', { class: 'error' }, 'Renderen mislukt, zie het log hierboven.'));
+  const fmts = videoFormats();
+  const job = await runJob('render', `Renderen: ${S.id}`, {
+    sub: `${DUR()} s · ${fmts.join(' · ')}`,
+    steps: fmts.map(f => S.formats[f].label),
+    step: j => j.step && { at: j.step.i, text: j.step.n > 1 ? `Formaat ${j.step.i + 1} van ${j.step.n}` : '' }
+  });
+  if (job?.state === 'done') showOutputs(job, [{ id: S.id, ...job.result }]);
+  else if (job?.state === 'error') $('#job-result').replaceChildren(el('p', { class: 'job-fail' }, icon('error'), 'Renderen mislukt. Het log hieronder laat zien waar het misging.'));
 }
 // Batch: pick videos, the server renders them one after another (each in its own formats).
 function openBatch() {
@@ -1522,11 +1946,11 @@ function openBatch() {
     const ids = checks.map(c => c.querySelector('input')).filter(i => i.checked).map(i => i.value);
     if (!ids.length) return ($('#batch-error').textContent = 'Kies minstens één video.');
     dlg.close();
-    const job = await runJob('batch', `${ids.length} video('s) renderen`, { id: 'all', body: { ids } });
-    if (!job) return;
-    const results = job.result?.results || [];
-    $('#job-result').replaceChildren(...results.map(r => el('p', { class: r.error ? 'error' : '' }, el('b', {}, r.id), ': ', r.error ? r.error : fileLinks([...r.files, ...(r.srt ? [r.srt] : [])]))),
-      el('p', { class: 'muted' }, `Alles staat in renders/${S.settings.copyToDownloads !== false ? ' en in Downloads' : ''}.`));
+    const job = await runJob('batch', `${ids.length} video('s) renderen`, {
+      id: 'all', body: { ids }, ic: 'video_library', sub: 'Elke video in zijn eigen formaten', steps: ids,
+      step: j => j.step && { at: j.step.vi, text: `Video ${j.step.vi + 1} van ${j.step.vn}${j.step.n > 1 ? ` · formaat ${j.step.i + 1} van ${j.step.n}` : ''}` }
+    });
+    if (job?.result?.results) showOutputs(job, job.result.results);
   };
   dlg.showModal();
 }
@@ -1538,7 +1962,8 @@ const revealRenders = () => api('/api/workspace/reveal', { method: 'POST', body:
 // ---------- menu bar ----------
 function showShortcuts() {
   const rows = [['Spatie', 'Afspelen / pauzeren'], ['← / →', '1 frame terug / verder'], ['Shift+← / →', '1 seconde terug / verder'], ['Home / End', 'Naar begin / einde'],
-    ['S', 'Splitsen op playhead (clip of ondertitel)'], ['Del', 'Geselecteerd item verwijderen'], ['Ctrl+D', 'Dupliceren'], ['Ctrl+Z / Ctrl+Shift+Z', 'Ongedaan maken / opnieuw'],
+    ['S', 'Splitsen op playhead (clip of ondertitel)'], ['Del', 'Geselecteerd item verwijderen'], ['Shift+Del', 'Clip verwijderen, de clips erna schuiven aan'],
+    [', / .', 'Selectie 1 frame verschuiven (Shift: 10; ook Alt+← / →)'], ['Alt', 'Tijdens slepen: niet snappen'], ['\\', 'Hele video in de tijdlijn passen'], ['Ctrl+D', 'Dupliceren'], ['Ctrl+Z / Ctrl+Shift+Z', 'Ongedaan maken / opnieuw'],
     ['Ctrl+C / X / V', 'Kopiëren / knippen / plakken op playhead (ook tussen video\'s)'], ['Ctrl+Shift+V', 'Plakken op dezelfde tijd'], ['Ctrl+A', 'Alles selecteren'], ['Ctrl+klik', 'Meer items selecteren'],
     ['M', 'Marker op playhead (nog eens = weg)'], ['[ / ]', 'Naar vorige / volgende marker of beat'], ['Esc', 'Deselecteren'], ['Ctrl+N', 'Nieuwe video'], ['Ctrl+O', 'Projecten'], ['Ctrl+R', 'Render MP4'], ['Ctrl+Shift+B', 'Batch renderen'], ['Ctrl+scroll', 'Tijdlijn in-/uitzoomen'], ['Alt of F10', 'Menubalk']];
   $('#keys-list').replaceChildren(...rows.map(([k, d]) => el('div', { class: 'key-row' }, el('kbd', {}, k), el('span', {}, d))));
@@ -1660,9 +2085,9 @@ function renderFormatBar() {
 }
 
 async function generateVo() {
-  const job = await runJob('vo', 'Voice-over maken');
+  const job = await runJob('vo', 'Voice-over maken', { ic: 'record_voice_over' });
   if (job?.state === 'done') {
-    S.history.push(clone(V()));
+    pushHistory(snapshot());
     V().audio = job.result.audio; V().vo.lines = job.result.lines;
     // First voice-over for this video: captions come along for free (they stay editable afterwards).
     const autoSubs = !V().subs?.length;
@@ -1847,6 +2272,7 @@ function wireDialogs() {
 
 // ---------- uploads ----------
 async function upload(files) {
+  let kind = null;
   for (const f of files) {
     toast(`Uploaden en omzetten: ${f.name}…`);
     try {
@@ -1854,9 +2280,13 @@ async function upload(files) {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
       toast(`${data.name} toegevoegd`);
+      kind = data.kind;
     } catch (e) { toast(`Upload mislukt: ${e.message}`, true); }
   }
+  S.thumbs = {}; S.media = {}; // a re-uploaded clip keeps its name but has new frames
+  if (kind) S.mediaTab = kind === 'audio' ? 'audio' : 'clips'; // show what was just added
   await loadState();
+  renderTimeline();
 }
 
 // ---------- keyboard ----------
@@ -1871,13 +2301,16 @@ function onKey(e) {
   else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); S.pasteKeep = Date.now(); pasteClip(true); }
   else if (!ctrl && !e.altKey && e.key.toLowerCase() === 'm') { e.preventDefault(); toggleMarker(); }
   else if (!ctrl && (e.key === '[' || e.key === ']')) { e.preventDefault(); jumpMarker(e.key === ']' ? 1 : -1); }
-  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSel(); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.shiftKey ? rippleDelete() : removeSel(); }
+  else if (!ctrl && (e.key === ',' || e.key === '.' || e.key === '<' || e.key === '>')) { e.preventDefault(); nudge((e.key === ',' || e.key === '<' ? -1 : 1) * (e.shiftKey ? 10 : 1)); }
+  else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); nudge((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1)); }
+  else if (!ctrl && e.key === '\\') { e.preventDefault(); fitTimeline(); }
   else if (!ctrl && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); S.player?.pause(); splitAtPlayhead(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); S.player?.pause(); seek(S.t - (e.shiftKey ? 1 : 1 / FPS)); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); S.player?.pause(); seek(S.t + (e.shiftKey ? 1 : 1 / FPS)); }
   else if (e.key === 'Home') { e.preventDefault(); seek(0); }
   else if (e.key === 'End') { e.preventDefault(); seek(DUR()); }
-  else if (e.key === 'Escape') { if (S.tapMode) setTapMode(false); else select(null); }
+  else if (e.key === 'Escape') { if (S.tapMode) setTapMode(false); select(null); }
   else if (!ctrl && !e.altKey && e.key.toLowerCase() === 't') { e.preventDefault(); setTapMode(!S.tapMode); }
 }
 
@@ -1919,19 +2352,27 @@ function init() {
   const zoom = $('#tl-zoom');
   zoom.value = S.pps = +(localStorage.getItem('ms-pps') || 70);
   zoom.oninput = () => { S.pps = +zoom.value; localStorage.setItem('ms-pps', zoom.value); renderTimeline(); };
+  $('#tl-fit').onclick = fitTimeline;
   $('#tl-scroll').addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    S.pps = Math.max(20, Math.min(240, S.pps * (e.deltaY < 0 ? 1.12 : 0.89)));
+    S.pps = Math.max(8, Math.min(240, S.pps * (e.deltaY < 0 ? 1.12 : 0.89)));
     zoom.value = S.pps; renderTimeline();
   }, { passive: false });
   $('#tl-ruler').addEventListener('pointerdown', e => { S.player?.pause(); seek(xToTime(e)); scrub(e); });
+  $('#tl-playhead span').addEventListener('pointerdown', e => { S.player?.pause(); scrub(e); });
+  // Media pool: tabs, search, drops on the timeline.
+  S.mediaTab = (() => { try { return localStorage.getItem('ms-media-tab') || 'clips'; } catch { return 'clips'; } })();
+  document.querySelectorAll('.media-tabs button').forEach(b => (b.onclick = () => setMediaTab(b.dataset.tab)));
+  $('#media-q').addEventListener('input', renderLibrary);
+  $('#media-q').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderLibrary(); e.target.blur(); } });
+  wireMediaDrop();
   let dragDepth = 0;
   addEventListener('dragenter', e => { if (e.dataTransfer?.types.includes('Files')) { dragDepth++; $('#drop-overlay').hidden = false; } });
   addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop-overlay').hidden = true; } });
   addEventListener('dragover', e => e.preventDefault());
   addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop-overlay').hidden = true; if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
-  addEventListener('beforeunload', e => { if (S.saveTimer) { flushSave(); e.preventDefault(); } });
+  addEventListener('pagehide', saveOnExit);
 }
 
 installTranslations();

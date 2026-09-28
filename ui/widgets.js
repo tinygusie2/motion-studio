@@ -183,6 +183,8 @@ export function menubar(nav, menus) {
   // Alt on its own opens the first menu, like a Windows menu bar; F10 too.
   let altAlone = false;
   addEventListener('keydown', e => { altAlone = e.key === 'Alt' && !e.repeat ? true : false; if (e.key === 'F10') { e.preventDefault(); current ? closeAll() : openMenu(0, true); } });
+  // Alt held while dragging (no snapping on the timeline) is not a menu press.
+  addEventListener('pointermove', e => { if (e.buttons) altAlone = false; });
   addEventListener('keyup', e => { if (e.key === 'Alt' && altAlone) { e.preventDefault(); current ? closeAll() : openMenu(0, true); } altAlone = false; });
   return { close: closeAll };
 }

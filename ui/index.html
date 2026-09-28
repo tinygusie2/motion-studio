@@ -38,18 +38,22 @@
         <button data-add="tap"><span class="ms">touch_app</span>Tik</button>
       </div>
     </section>
-    <section class="grow">
+    <section class="grow media">
       <div class="row-between">
-        <h3>Clips</h3>
+        <h3>Media</h3>
         <label class="upload" title="Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)">
           <span class="ms">upload</span>Upload
           <input id="upload" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp" multiple hidden />
         </label>
       </div>
-      <p class="hint">Klik op een clip om hem op de playhead in de telefoon te zetten. Sleep bestanden hierheen om te uploaden.</p>
+      <div class="media-tabs" role="tablist">
+        <button data-tab="clips" role="tab"><span class="ms">movie</span>Clips<b></b></button>
+        <button data-tab="audio" role="tab"><span class="ms">graphic_eq</span>Audio<b></b></button>
+      </div>
+      <label class="media-search"><span class="ms">search</span><input id="media-q" type="search" placeholder="Zoeken" /></label>
       <div id="clip-list"></div>
-      <h3 class="mt">Audio</h3>
-      <div id="audio-list"></div>
+      <div id="audio-list" hidden></div>
+      <p class="hint media-foot">Klik om op de playhead te zetten, of sleep naar de tijdlijn. Nieuwe bestanden kun je overal in het venster neerzetten.</p>
     </section>
   </aside>
 
@@ -84,10 +88,11 @@
   <footer id="timeline">
     <div id="tl-head">
       <span class="muted">Tijdlijn</span>
-      <span class="hint">Sleep blokken om te verschuiven, sleep randen om in te korten · Spatie = afspelen · S = splitsen op playhead · Del = verwijderen · Ctrl+D = dupliceren</span>
+      <span class="hint">Sleep blokken om te verschuiven, sleep randen om in te korten · Alt = zonder snappen · S = splitsen · , . = frame verschuiven · Del = verwijderen</span>
       <div class="spacer"></div>
+      <button id="tl-fit" class="ghost icon" title="Hele video in beeld (\)"><span class="ms">fit_screen</span></button>
       <span class="ms muted">zoom_out</span>
-      <input id="tl-zoom" type="range" min="20" max="240" value="70" />
+      <input id="tl-zoom" type="range" min="8" max="240" value="70" />
       <label class="toggle" title="Beats van de muziek tonen en erop snappen"><input id="beats-toggle" type="checkbox" /> Beats</label>
       <span class="ms muted">zoom_in</span>
     </div>
@@ -118,11 +123,24 @@
   </dialog>
 
   <dialog id="dlg-job">
-    <h2 id="job-title">Renderen</h2>
-    <div class="progress"><div id="job-bar"></div></div>
-    <pre id="job-log"></pre>
+    <header class="job-head">
+      <span class="job-badge"><span class="ms" id="job-icon">movie</span></span>
+      <div class="job-titles"><h2 id="job-title">Renderen</h2><p id="job-sub" class="muted"></p></div>
+      <span id="job-state" class="job-state"></span>
+    </header>
+    <section id="job-run">
+      <div class="job-meter"><b id="job-pct">0%</b><span id="job-step"></span><span class="spacer"></span><span id="job-time" class="muted"></span></div>
+      <div class="progress"><div id="job-bar"></div></div>
+      <div id="job-steps"></div>
+    </section>
     <div id="job-result"></div>
-    <div class="dlg-actions"><button id="job-close" class="ghost">Sluiten</button></div>
+    <details id="job-details"><summary><span class="ms">terminal</span>Log</summary><pre id="job-log"></pre></details>
+    <div class="dlg-actions">
+      <button id="job-stop" class="ghost danger"><span class="ms">stop_circle</span>Stoppen</button>
+      <button id="job-reveal" class="ghost" hidden><span class="ms">folder_open</span>Map openen</button>
+      <span class="spacer"></span>
+      <button id="job-close" autofocus>Sluiten</button>
+    </div>
   </dialog>
 
   <dialog id="dlg-project">

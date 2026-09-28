@@ -36,8 +36,9 @@ const en = {
   'Naar begin (Home)': 'Go to start (Home)', '1 frame terug (←)': 'Back 1 frame (←)', 'Afspelen (spatie)': 'Play (space)', '1 frame verder (→)': 'Forward 1 frame (→)',
   'Laden…': 'Loading…', 'Preview-fout (zie console)': 'Preview error (see console)',
   'Tijdlijn': 'Timeline', 'Beats': 'Beats', 'Beats van de muziek tonen en erop snappen': 'Show the music beats and snap to them',
-  'Sleep blokken om te verschuiven, sleep randen om in te korten · Spatie = afspelen · S = splitsen op playhead · Del = verwijderen · Ctrl+D = dupliceren':
-    'Drag blocks to move them, drag edges to trim · Space = play · S = split at playhead · Del = delete · Ctrl+D = duplicate',
+  'Sleep blokken om te verschuiven, sleep randen om in te korten · Alt = zonder snappen · S = splitsen · , . = frame verschuiven · Del = verwijderen':
+    'Drag blocks to move them, drag edges to trim · Alt = no snapping · S = split · , . = nudge a frame · Del = delete',
+  'Hele video in beeld (\\)': 'Fit the whole video (\\)',
   'Telefoon': 'Phone', 'Telefoon 1': 'Phone 1', 'Telefoon 2': 'Phone 2', 'Tablet': 'Tablet', 'Browser': 'Browser', 'Callouts': 'Callouts',
   'Voice-over': 'Voice-over', 'Tikken': 'Taps', 'Ondertitels': 'Captions', 'Stem': 'Voice', 'Muziek': 'Music', 'Eindkaart': 'End card',
   'Marker {0}s\nKlik: erheen · sleep: verplaatsen · dubbelklik: weghalen': 'Marker {0}s\nClick: go there · drag: move · double-click: remove',
@@ -49,7 +50,12 @@ const en = {
   'Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)': 'Screen recordings (mp4, mov, webm), screenshots (png, jpg) or audio (wav, mp3)',
   'Nog geen audio. Upload muziek of een opname (wav, mp3, m4a).': 'No audio yet. Upload music or a recording (wav, mp3, m4a).',
   'Beluisteren': 'Listen', 'Als muziek onder de video': 'As music under the video', 'Als stem / audiospoor': 'As voice / audio track', 'Bestand verwijderen': 'Delete file',
-  'stem': 'voice', 'muziek': 'music', 'foto': 'photo',
+  'stem': 'voice', 'muziek': 'music', 'foto': 'photo', 'Media': 'Media', 'Selectie opheffen (Esc)': 'Deselect (Esc)', 'Zoeken': 'Search', 'Gebruikt in deze video': 'Used in this video', 'Of sleep naar de tijdlijn': 'Or drag it onto the timeline',
+  'Klik om op de playhead te zetten, of sleep naar de tijdlijn. Nieuwe bestanden kun je overal in het venster neerzetten.': 'Click to put it at the playhead, or drag it onto the timeline. Drop new files anywhere in the window.',
+  'Sleep schermopnames of screenshots hierheen, of klik om te uploaden': 'Drop screen recordings or screenshots here, or click to upload',
+  'Sleep muziek of een opname hierheen (wav, mp3, m4a), of klik om te uploaden': 'Drop music or a recording here (wav, mp3, m4a), or click to upload',
+  'Geen clips met "{0}"': 'No clips matching "{0}"', 'Geen audio met "{0}"': 'No audio matching "{0}"',
+  'Sleep naar de tijdlijn: muziek vanaf dat punt (op de rij Stem: als stem)': 'Drag onto the timeline: music from that point (on the Voice row: as the voice)',
   '{0} ({1} × {2})\nKlik: op de playhead in het apparaat zetten\nShift+klik: telefoon 2': '{0} ({1} × {2})\nClick: put it on the device at the playhead\nShift+click: phone 2',
   '{0} ({1} × {2})\nKlik: op de playhead in het apparaat zetten': '{0} ({1} × {2})\nClick: put it on the device at the playhead',
   '{0}\nKlik: op de playhead in het apparaat zetten\nShift+klik: telefoon 2': '{0}\nClick: put it on the device at the playhead\nShift+click: phone 2',
@@ -201,16 +207,21 @@ const en = {
   'Rendert de gekozen video\'s na elkaar, elk in de formaten die bij die video zijn aangevinkt. Je kunt dit venster sluiten; het renderen gaat door.':
     'Renders the chosen videos one after another, each in the formats ticked for that video. You can close this window; rendering carries on.',
   'Kies minstens één video.': 'Choose at least one video.', '{0} video(\'s) renderen': 'Render {0} video(s)', 'Renderen: {0}': 'Rendering: {0}',
-  'Klaar!': 'Done!', 'staan in renders/ en in Downloads.': 'are in renders/ and in Downloads.', 'staan in renders/.': 'are in renders/.',
-  'Alles staat in renders/ en in Downloads.': 'Everything is in renders/ and in Downloads.', 'Alles staat in renders/.': 'Everything is in renders/.',
-  'Renderen mislukt, zie het log hierboven.': 'Rendering failed, see the log above.',
+  'Bezig': 'Running', 'Klaar': 'Done', 'Mislukt': 'Failed', 'Gestopt': 'Stopped', 'Gestopt.': 'Stopped.', 'Stoppen': 'Stop', 'Map openen': 'Open folder', 'Log': 'Log',
+  'Formaat {0} van {1}': 'Format {0} of {1}', 'Video {0} van {1}': 'Video {0} of {1}', 'formaat {0} van {1}': 'format {0} of {1}',
+  'nog ~{0}': '~{0} left', '{0} verstreken': '{0} elapsed', 'Elke video in zijn eigen formaten': 'Each video in its own formats',
+  'Rendertijd': 'Render time', 'Totaal': 'Total', 'Bestanden': 'Files', 'Bekijken': 'Watch', 'Downloaden': 'Download', 'Ondertitels (.srt)': 'Captions (.srt)',
+  'In renders/ en in Downloads.': 'In renders/ and in Downloads.', 'In de map renders/ van dit project.': 'In this project\'s renders/ folder.',
+  'Renderen mislukt. Het log hieronder laat zien waar het misging.': 'Rendering failed. The log below shows where it went wrong.',
   'Klaar. {0} is nu het audiospoor. De lengte van elke zin staat op de tijdlijn. De ondertitels zijn er meteen bij gemaakt.': 'Done. {0} is now the audio track. The length of every line is on the timeline. The captions were made right away.',
   'Klaar. {0} is nu het audiospoor. De lengte van elke zin staat op de tijdlijn. Klik op "Uit voice-over" om de ondertitels bij te werken.': 'Done. {0} is now the audio track. The length of every line is on the timeline. Click "From voice-over" to update the captions.',
   'Sneltoetsen': 'Keyboard shortcuts', 'Zoeken…': 'Search…',
 
   // shortcuts dialog
   'Afspelen / pauzeren': 'Play / pause', '1 frame terug / verder': '1 frame back / forward', '1 seconde terug / verder': '1 second back / forward', 'Naar begin / einde': 'Go to start / end',
-  'Splitsen op playhead (clip of ondertitel)': 'Split at playhead (clip or caption)', 'Geselecteerd item verwijderen': 'Delete selected item', 'Ongedaan maken / opnieuw': 'Undo / redo',
+  'Splitsen op playhead (clip of ondertitel)': 'Split at playhead (clip or caption)', 'Geselecteerd item verwijderen': 'Delete selected item',
+  'Clip verwijderen, de clips erna schuiven aan': 'Delete a clip and pull the clips after it back', 'Selectie 1 frame verschuiven (Shift: 10; ook Alt+← / →)': 'Nudge the selection 1 frame (Shift: 10; also Alt+← / →)',
+  'Tijdens slepen: niet snappen': 'While dragging: no snapping', 'Hele video in de tijdlijn passen': 'Fit the whole video in the timeline', 'Ongedaan maken / opnieuw': 'Undo / redo',
   'Kopiëren / knippen / plakken op playhead (ook tussen video\'s)': 'Copy / cut / paste at playhead (also between videos)', 'Meer items selecteren': 'Select more items',
   'Ctrl+klik': 'Ctrl+click', 'Marker op playhead (nog eens = weg)': 'Marker at playhead (again = remove)', 'Naar vorige / volgende marker of beat': 'Go to previous / next marker or beat',
   'Tijdlijn in-/uitzoomen': 'Zoom timeline in / out', 'Alt of F10': 'Alt or F10', 'Menubalk': 'Menu bar', 'Nieuwe video': 'New video', 'Projecten': 'Projects', 'Batch renderen': 'Batch render',
@@ -233,6 +244,7 @@ const en = {
   '{0} item geknipt': '{0} item cut', '{0} items geknipt': '{0} items cut', 'Het klembord is leeg.': 'The clipboard is empty.',
   '{0} item geplakt': '{0} item pasted', '{0} items geplakt': '{0} items pasted', '{0} item geplakt uit {1}': '{0} item pasted from {1}', '{0} items geplakt uit {1}': '{0} items pasted from {1}',
   '{0} overgeslagen ({1})': '{0} skipped ({1})', '{0} items verwijderd': '{0} items deleted',
+  '{0} clip verwijderd, de rest is aangeschoven': '{0} clip deleted, the rest moved up', '{0} clips verwijderd, de rest is aangeschoven': '{0} clips deleted, the rest moved up',
   'Beats gevonden in {0}: {1} beats, ±{2} BPM': 'Beats found in {0}: {1} beats, ±{2} BPM', 'Beats niet gevonden: {0}': 'Beats not found: {0}',
   'Uploaden en omzetten: {0}…': 'Uploading and converting: {0}…', '{0} toegevoegd': '{0} added', 'Upload mislukt: {0}': 'Upload failed: {0}',
   'Kopie van {0}': 'Copy of {0}', 'Nieuwe video': 'New video',
@@ -286,7 +298,7 @@ export function tr(text, depth = 0) {
 }
 
 // User content that must never be translated (names, file names, typed text, the timeline's item labels).
-const SKIP = 'script, style, textarea, .lbl, .no-i18n, #project-name, .dd[data-for="video-select"] .dd-label, .clip-card span, .audio-item .name, .recent, .batch-row b, .batch-row span, .chip-demo, #job-log, #tl-ruler';
+const SKIP = 'script, style, textarea, .lbl, .no-i18n, #project-name, .dd[data-for="video-select"] .dd-label, .clip-meta .nm, .audio-item .name, .recent, .batch-row b, .batch-row span, .chip-demo, #job-log, #tl-ruler';
 const ATTRS = ['title', 'placeholder', 'aria-label'];
 function translateNode(n) {
   if (n.nodeType === 3) {

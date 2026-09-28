@@ -51,6 +51,14 @@ async function createWindow() {
     webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   win.once('ready-to-show', () => { win.maximize(); win.show(); });
+  // Closing: let the editor write its last change first (it saves 350 ms after an edit), then close for real.
+  let flushed = false;
+  win.on('close', e => {
+    if (flushed || smoke) return;
+    e.preventDefault(); flushed = true;
+    const flush = win.webContents.executeJavaScript('window.__flushSave?.()', true).catch(() => {});
+    Promise.race([flush, new Promise(r => setTimeout(r, 3000))]).finally(() => win.destroy());
+  });
   // Links (e.g. to fonts.google.com) open in the normal browser.
   win.webContents.setWindowOpenHandler(({ url: target }) => { shell.openExternal(target); return { action: 'deny' }; });
   await win.loadURL(url);
