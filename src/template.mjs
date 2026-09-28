@@ -97,6 +97,39 @@ export function clipPlacement(c, [W, H]) {
   return { cls: '', style };
 }
 
+// Transitions between clips on one device. A clip's `tr` (+ optional `trDur`) is how it comes in; `dur` is the default length.
+export const transitions = {
+  fade: { label: 'Overvloeien', dur: 0.5 },
+  slide: { label: 'Schuiven', dur: 0.45 },
+  whip: { label: 'Zwiep', dur: 0.3 },
+  zoom: { label: 'Inzoomen', dur: 0.45 }
+};
+
+// Plans the transitions of one clip list. The cut stays where it is (the incoming clip's start); the clip before it
+// (the one still showing at that moment, or ending at most 0.1 s earlier) is held on screen `d` seconds longer, so the
+// two overlap while they animate. Without a clip before it, the clip only animates in over the screen background.
+// Returns `hold` (extra seconds per clip), `z` (stacking by start, later on top) and the transitions themselves.
+export function clipTransitions(list) {
+  const hold = list.map(() => 0);
+  const order = list.map((c, i) => i).sort((a, b) => list[a].start - list[b].start || a - b);
+  const z = list.map(() => 0);
+  order.forEach((i, n) => (z[i] = n + 1));
+  const trs = [];
+  list.forEach((c, i) => {
+    if (!transitions[c.tr]) return;
+    const d = Math.max(0.05, Math.min(+c.trDur || transitions[c.tr].dur, c.dur));
+    let from = -1;
+    list.forEach((p, j) => {
+      const end = p.start + p.dur;
+      if (j === i || z[j] > z[i] || end < c.start - 0.1) return;
+      if (from < 0 || end > list[from].start + list[from].dur) from = j;
+    });
+    if (from >= 0) hold[from] = Math.max(hold[from], +(c.start + d - list[from].start - list[from].dur).toFixed(3));
+    trs.push({ to: i, from, t: c.start, d, type: c.tr });
+  });
+  return { hold, z, trs };
+}
+
 // brand = resolved brand from the workspace: { name, lang, url, logoHtml, pills, theme, chipColors, font, endNameSize, css }
 export function build(v, brand, fmt = '9:16') {
   v = normalize(v);
@@ -111,11 +144,16 @@ export function build(v, brand, fmt = '9:16') {
     ? '<svg class="tap-cursor" viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 3.1-1.4-2.9-6.5 6.3-.3z"/></svg>'
     : '<i class="tap-dot"></i>'}</div>`).join('');
   const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
-  const place = c => { const p = clipPlacement(c, layouts[L].screen); return `class="clip screen-video${p.cls}"${p.style ? ` style="${p.style}"` : ''}`; };
-  const clipTags = (list, prefix, track) => list.map((c, i) => isImage(c.src)
-    ? `<img id="${v.id}-${prefix}${i}" ${place(c)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${c.dur}" data-track-index="${track + i}" alt="" />`
-    : `<video id="${v.id}-${prefix}${i}" ${place(c)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${c.dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}" muted playsinline></video>`
-  ).join('\n                ');
+  // With transitions, clips stack by start (the incoming one on top) and a clip that hands over is held longer.
+  const plans = { clip: clipTransitions(v.clips), 'clip2-': clipTransitions(L === 'dual' ? v.clips2 : []) };
+  const place = (c, z) => { const p = clipPlacement(c, layouts[L].screen), style = p.style + (z ? `${p.style ? ';' : ''}z-index:${z}` : ''); return `class="clip screen-video${p.cls}"${style ? ` style="${style}"` : ''}`; };
+  const clipTags = (list, prefix, track) => list.map((c, i) => {
+    const plan = plans[prefix], z = plan.trs.length ? plan.z[i] : 0, dur = +(c.dur + plan.hold[i]).toFixed(3);
+    return isImage(c.src)
+      ? `<img id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-track-index="${track + i}" alt="" />`
+      : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}" muted playsinline></video>`;
+  }).join('\n                ');
+  const clipTrs = Object.entries(plans).flatMap(([prefix, p]) => p.trs.map(({ to, from, t, d, type }) => ({ to: `${v.id}-${prefix}${to}`, from: from >= 0 ? `${v.id}-${prefix}${from}` : null, t, d, type })));
   const chrome = L === 'browser' ? `<div class="chrome"><i></i><i></i><i></i><span class="addr"><span class="ms">lock</span>${esc(brand.url || '')}</span></div>` : '';
   const phone = (id, list, prefix, track, tag) => `<div id="${id}" class="phone L-${L}">
         <div id="${id}-zoom" class="phone-zoom">
@@ -165,6 +203,7 @@ export function build(v, brand, fmt = '9:16') {
       const chips = ${JSON.stringify(v.chips.map(({ t, out, count, suffix }) => ({ t, out, count, suffix })))};
       const zooms = ${JSON.stringify(v.zooms)};
       const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t) })))};
+      const clipTrs = ${JSON.stringify(clipTrs)};
       const END = ${END};
       const caps = ${JSON.stringify(capGroups.map(g => ({ s: g.s, e: g.e, w: g.words.map(w => w.t), em: g.words.map(w => !!w.em) })))};
       const CAP = ${JSON.stringify({ style: cs.style, color: capColor, hi: capHi, ink: capInk, shadow: capShadow })};
@@ -191,6 +230,20 @@ export function build(v, brand, fmt = '9:16') {
       // Device enters, then breathes.
       ${enter}
       tl.fromTo('.phone-inner', { y: 0 }, { y: -18, duration: END - 1.8, ease: 'sine.inOut', stagger: 0.4 }, 1.8);
+      // Clip transitions: the incoming clip (stacked on top) animates in while the clip it replaces, held on screen
+      // for the overlap, animates out, so nothing of it shows through a fitted clip's background afterwards.
+      const SW = ${layouts[L].screen[0]};
+      clipTrs.forEach(c => {
+        const to = document.getElementById(c.to), from = c.from && document.getElementById(c.from);
+        const o = { duration: c.d, immediateRender: false };
+        const both = (a, b, ease, outEase = ease) => { tl.fromTo(to, a[0], { ...a[1], ease, ...o }, c.t); if (from) tl.fromTo(from, b[0], { ...b[1], ease: outEase, ...o }, c.t); };
+        // The crossfade eases the two against each other, so the screen background doesn't show through halfway.
+        if (c.type === 'fade') both([{ opacity: 0 }, { opacity: 1 }], [{ opacity: 1 }, { opacity: 0 }], 'power2.out', 'power2.in');
+        else if (c.type === 'slide') both([{ x: SW }, { x: 0 }], [{ x: 0 }, { x: -SW }], 'power3.inOut');
+        else if (c.type === 'whip') both([{ x: SW, filter: 'blur(30px)' }, { x: 0, filter: 'blur(0px)' }], [{ x: 0, filter: 'blur(0px)' }, { x: -SW, filter: 'blur(30px)' }], 'expo.inOut');
+        else if (c.type === 'zoom') both([{ opacity: 0, scale: 1.3 }, { opacity: 1, scale: 1 }], [{ opacity: 1, scale: 1 }, { opacity: 0, scale: 0.9 }], 'power3.out');
+      });
+
       // Zooms. With a focus point (fx, fy in frame pixels) the device shifts so that point lands mid-screen,
       // clamped so the zoomed device still covers the area it covered before; otherwise only the manual y shift.
       const dev = document.getElementById('phone');

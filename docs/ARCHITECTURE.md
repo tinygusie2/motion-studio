@@ -54,7 +54,7 @@ Every project is a folder. Motion Studio can switch between them (Bestand → Pr
 | --- | --- |
 | `studio.json` | `{ name, defaultBrand }` |
 | `brands/<id>.json` | name, url, lang, `logo` (file in `assets/brand/`), `font` (file in `assets/fonts/`), `theme` colors, `chipColors`, `pills`, `endNameSize`, `renderPrefix`, `css`, `captions` (default caption style) |
-| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips`, `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
+| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
 | `assets/clips/` | screen recordings (converted to H.264 on upload) and screenshots (png/jpg); deleted files go to `.trash/` |
 | `assets/vo/` | audio (voice and music); generated voice-overs land here; deleted files go to `.trash/` |
 | `renders/` | finished MP4s (`<renderPrefix>-<id>[-4x5\|-1x1\|-16x9].mp4`), plus a `.srt` when the video has captions |
@@ -134,6 +134,15 @@ See `clipPlacement` in `src/template.mjs`.
 
 The editor's fit check and the library cards use `layouts[…].screen` to report how much of a clip is cut off or
 enlarged. The ideal source size is twice the screen size.
+
+## Clip transitions
+
+By default one clip cuts hard to the next. A clip's `tr` (`fade`, `slide`, `whip` or `zoom`, see `transitions` in
+`src/template.mjs`) and optional `trDur` (seconds) set how it comes in. The cut stays at the incoming clip's `start`:
+the clip that was showing there (or ended at most 0.1 s before) is held on screen `trDur` seconds longer, by
+extending its `data-duration`, and both animate on the GSAP timeline while they overlap. Clips then stack by their
+start, so the incoming one is on top. Without a clip before it, the clip only animates in over the screen
+background. `clipTransitions()` plans this per device.
 
 ## Formats
 

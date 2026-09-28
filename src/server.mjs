@@ -8,7 +8,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSy
 import { homedir, tmpdir } from 'node:os';
 import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { layouts, formats, normalize, defaultTheme, defaultChipColors } from './template.mjs';
+import { layouts, formats, transitions, normalize, defaultTheme, defaultChipColors } from './template.mjs';
 import { toSrt } from './captions.mjs';
 import { APP_ROOT, Workspace, createWorkspace, isWorkspace, loadSettings, saveSettings, validId } from './workspace.mjs';
 
@@ -265,7 +265,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
 
   function state() {
     const t = tools(settings);
-    const base = { settings: { ...settings, detected: t }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, defaultTheme, defaultChipColors };
+    const base = { settings: { ...settings, detected: t }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, transitions, defaultTheme, defaultChipColors };
     if (!ws) return { ...base, workspace: null };
     return {
       ...base,

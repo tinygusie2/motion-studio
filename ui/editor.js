@@ -54,7 +54,7 @@ async function loadState() {
   applyState(await api('/api/state'));
 }
 function applyState(s) {
-  Object.assign(S, { workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
+  Object.assign(S, { workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
   $('#project-name').textContent = s.workspace?.name || 'Geen project';
   if (!s.workspace) return;
   Object.assign(S, { list: s.videos, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
@@ -1126,6 +1126,8 @@ function splitAtPlayhead() {
       const c = v[kind][i], d = round(t - c.start);
       const second = { ...c, start: t, dur: round(c.dur - d) };
       if (!isImage(c.src)) second.media = round((c.media || 0) + d * (c.rate || 1));
+      // The split point stays a seamless cut; the transition belongs to the first half.
+      delete second.tr; delete second.trDur;
       c.dur = d;
       v[kind].splice(i + 1, 0, second);
     });
@@ -1394,6 +1396,16 @@ async function deleteAsset(kind, name) {
   } catch (e) { toast(e.message, true); }
 }
 
+// How the clip comes in: a hard cut, or a transition over the clip before it (which is held on screen for its length).
+function transitionControls(k, i, c) {
+  const types = S.transitions || {};
+  return [
+    selectField('Overgang naar deze clip', c.tr || '', [['', 'Harde overgang'], ...Object.entries(types).map(([id, t]) => [id, t.label])],
+      (x, v) => { if (x) v[k][i].tr = x; else { delete v[k][i].tr; delete v[k][i].trDur; } }),
+    types[c.tr] ? field('Duur overgang (s)', c.trDur ?? types[c.tr].dur, (x, v) => { if (x == null) delete v[k][i].trDur; else v[k][i].trDur = x; }, { type: 'number', step: 0.05, min: 0.05, max: 2, optional: true }) : null
+  ];
+}
+
 function clipPanel(k, i, c) {
   if (isImage(c.src)) return [
     head('image', k === 'clips2' ? 'Afbeelding · telefoon 2' : 'Afbeelding'),
@@ -1404,6 +1416,7 @@ function clipPanel(k, i, c) {
     el('div', { class: 'field-row' },
       field('Start in video (s)', c.start, (x, v) => (v[k][i].start = x), { type: 'number', step: 0.05, min: 0 }),
       field('Duur (s)', c.dur, (x, v) => (v[k][i].dur = x), { type: 'number', step: 0.05, min: 0.1 })),
+    ...transitionControls(k, i, c),
     actions()
   ];
   const rate = c.rate || 1;
@@ -1426,6 +1439,7 @@ function clipPanel(k, i, c) {
     el('div', { class: 'field-row' },
       mediaInput,
       field('Snelheid', rate, (x, v) => { if (x === 1) delete v[k][i].rate; else v[k][i].rate = x; }, { type: 'number', step: 0.25, min: 0.25, max: 4 })),
+    ...transitionControls(k, i, c),
     srcDur && used > srcDur + 0.05 ? el('p', { class: 'warn' }, `Let op: de clip loopt ${(used - srcDur).toFixed(1)}s voorbij het einde van de opname (${srcDur.toFixed(1)}s).`) : null,
     actions()
   ];
