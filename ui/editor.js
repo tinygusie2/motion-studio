@@ -920,9 +920,11 @@ function startDrag(e, it) {
   const edge = e.target.dataset.edge || 'move';
   const sc = $('#tl-scroll');
   const x0 = e.clientX + sc.scrollLeft;
-  const group = edge === 'move' && S.multi?.length > 1 && isSelected(it) ? S.multi.map(r => ({ ...r, o: clone(listOf(r.kind)[r.i]) })) : null;
+  const group = edge === 'move' && S.multi?.length > 1 && isSelected(it) ? withVoSubs(S.multi).map(r => ({ ...r, o: clone(listOf(r.kind)[r.i]) })) : null;
+  // A voice-over line takes its captions along.
+  const voSubsNow = !group && it.kind === 'vo' ? voSubsOf(V(), V().vo.lines[it.i]).map(j => ({ j, o: clone(V().subs[j]) })) : [];
   const orig = clone(it.kind === 'end' ? { end: END(), dur: DUR() } : it.kind === 'music' ? { ...musicDefaults, ...V().music, dur: it.e - it.s } : listOf(it.kind)[it.i]);
-  const own = new Set(group ? group.map(itemKey) : [itemKey(it)]);
+  const own = new Set(group ? group.map(itemKey) : [itemKey(it), ...voSubsNow.map(x => `sub:${x.j}`)]);
   const snaps = [0, S.t, END(), DUR(), ...(V().markers || []).map(m => m.t), ...(S.snapBeats ? beatTimes() : [])];
   for (const r of rows()) for (const o of r.items) if (!own.has(itemKey(o))) snaps.push(o.s, o.e);
   let free = false;
@@ -952,7 +954,11 @@ function startDrag(e, it) {
     switch (it.kind) {
       case 'head': v.heads[it.i].t = Math.max(0, snapMove(o.t + dt)); break;
       case 'tap': v.taps[it.i].t = Math.max(0.25, snap(o.t + dt)); break;
-      case 'vo': v.vo.lines[it.i].t = Math.max(0, snapMove(o.t + dt)); break;
+      case 'vo': {
+        v.vo.lines[it.i].t = Math.max(0, snapMove(o.t + dt));
+        for (const x of voSubsNow) shiftItem(v.subs[x.j], x.o, v.vo.lines[it.i].t - o.t);
+        break;
+      }
       case 'clips': case 'clips2': {
         const c = v[it.kind][it.i], rate = o.rate || 1;
         if (edge === 'move') c.start = Math.max(0, snapMove(o.start + dt));
@@ -1025,6 +1031,18 @@ function startDrag(e, it) {
   addEventListener('pointermove', move); addEventListener('pointerup', up);
   addEventListener('keydown', key); addEventListener('keyup', key);
 }
+// Captions that were made from a voice-over line (they start within its time, also after a split) belong to it.
+function voSubsOf(v, line) {
+  if (!line) return [];
+  const a = line.t, b = line.t + (line.len || estLen(line.text));
+  return v.subs.map((_, j) => j).filter(j => v.subs[j].t >= a - 0.05 && v.subs[j].t < b - 0.05);
+}
+// The selection plus the captions of its voice-over lines (not selected themselves), to move together.
+function withVoSubs(refs) {
+  const out = [...refs], has = new Set(refs.map(itemKey));
+  for (const r of refs) if (r.kind === 'vo') for (const j of voSubsOf(V(), V().vo.lines[r.i])) if (!has.has(`sub:${j}`)) { has.add(`sub:${j}`); out.push({ kind: 'sub', i: j }); }
+  return out;
+}
 // Shift an item (clip, callout, text, …) by d seconds from its original o.
 function shiftItem(x, o, d) {
   if ('start' in o) x.start = round(o.start + d);
@@ -1044,7 +1062,7 @@ function sortClips() {
 }
 // , and . (or Alt+← / →) move the selection by a frame, with Shift by ten.
 function nudge(frames) {
-  const refs = selectedRefs();
+  const refs = withVoSubs(selectedRefs());
   if (!refs.length) return;
   const low = Math.min(...refs.map(r => startOf(r.kind, listOf(r.kind)[r.i]) - (r.kind === 'tap' ? 0.25 : 0)));
   // Steps land on the frame grid (times are kept to 1/100 s), so ten nudges are exactly ten frames.
@@ -1170,9 +1188,11 @@ function renderInspector() {
   ];
   else if (k === 'vo') content = [
     head('record_voice_over', 'Voice-over zin'),
-    field('Tekst', it.text, (x, v) => { v.vo.lines[i].text = x; delete v.vo.lines[i].len; }, { textarea: true, live: true }),
-    field('Start (s)', it.t, (x, v) => (v.vo.lines[i].t = x), { type: 'number', step: 0.05, min: 0 }),
+    field('Tekst', it.text, (x, v) => { v.vo.lines[i].text = x; delete v.vo.lines[i].len; delete v.vo.lines[i].at; }, { textarea: true, live: true }),
+    field('Start (s)', it.t, (x, v) => { const l = v.vo.lines[i], d = x - l.t; for (const j of voSubsOf(v, l)) shiftItem(v.subs[j], clone(v.subs[j]), d); l.t = x; }, { type: 'number', step: 0.05, min: 0 }),
     el('p', { class: 'hint' }, it.len ? `Ingesproken lengte: ${it.len.toFixed(2)}s.` : 'Nog niet ingesproken. Klik op "Voice-over maken" om hem te genereren.'),
+    // Made before lines kept their spot in the file: the audio stays where it was until it's made again.
+    it.len && V().audio && !V().vo.file ? el('p', { class: 'hint warn-text' }, 'Deze voice-over is gemaakt met een oudere versie: het geluid schuift nog niet mee als je de zin verplaatst. Klik één keer op "Voice-over maken" (ingesproken zinnen komen uit de cache, dus dat gaat snel).') : null,
     el('button', { class: 'primary', onclick: generateVo }, icon('graphic_eq'), 'Voice-over maken'),
     actions()
   ];

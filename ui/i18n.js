@@ -93,6 +93,7 @@ const en = {
   'Klik op het apparaat in de preview om in te zoomen op dat punt, bijvoorbeeld een knop. Zonder focuspunt gebruikt de zoom de Y-verschuiving: negatief = naar de onderkant, positief = naar de bovenkant.':
     'Click the device in the preview to zoom in on that point, for example a button. Without a focus point the zoom uses the Y shift: negative = towards the bottom, positive = towards the top.',
   'Nog niet ingesproken. Klik op "Voice-over maken" om hem te genereren.': 'Not spoken yet. Click "Make voice-over" to generate it.', 'Ingesproken lengte: {0}s.': 'Spoken length: {0}s.',
+  'Deze voice-over is gemaakt met een oudere versie: het geluid schuift nog niet mee als je de zin verplaatst. Klik één keer op "Voice-over maken" (ingesproken zinnen komen uit de cache, dus dat gaat snel).': 'This voice-over was made with an older version: its audio does not move with the line yet. Click "Make voice-over" once (spoken lines come from the cache, so it is quick).',
   'Sleep het oranje bolletje in de preview, of klik op het apparaat om de tik daarheen te zetten. Met Tik-modus (T) zet elke klik een nieuwe tik op de playhead, ook tijdens het afspelen.':
     'Drag the orange dot in the preview, or click the device to move the tap there. In Tap mode (T) every click adds a new tap at the playhead, also during playback.',
   'Tik-modus stoppen': 'Stop tap mode', 'Moment (s)': 'Moment (s)', 'Weergave': 'Look', 'Automatisch (vinger)': 'Automatic (finger)', 'Automatisch (muisaanwijzer)': 'Automatic (mouse pointer)',

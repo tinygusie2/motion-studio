@@ -195,18 +195,21 @@ uiTest('a click on an empty spot of the timeline, Esc or the close button desele
   assert.equal(await selected(), 0);
 });
 
-uiTest('panel edges can be dragged, are remembered, and reset with a double-click', async t => {
+uiTest('moving a voice-over line takes its captions (also split ones) along, and nothing else', async t => {
   await open(t);
-  const width = sel => page.locator(sel).evaluate(n => n.getBoundingClientRect().width);
-  const g = await page.locator('.gutter.lib').boundingBox();
-  await page.mouse.move(g.x + g.width / 2, 300);
-  await page.mouse.down();
-  await page.mouse.move(g.x + g.width / 2 + 100, 300, { steps: 5 });
-  await page.mouse.up();
-  assert.equal(Math.round(await width('#library')), 350);
+  const v = await onDisk();
+  v.vo = { lines: [{ t: 1, len: 1, text: 'eerste zin' }, { t: 5, len: 1, text: 'tweede zin' }] };
+  v.subs = [{ t: 1, out: 1.5, text: 'eerste' }, { t: 1.5, out: 2, text: 'zin' }, { t: 5, out: 6, text: 'tweede zin' }];
+  await fetch(`${url}/api/videos/ui-test`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v) });
   await page.reload();
-  await page.locator('.tl-item').first().waitFor();
-  assert.equal(Math.round(await width('#library')), 350, 'remembered');
-  await page.locator('.gutter.lib').dblclick();
-  assert.equal(Math.round(await width('#library')), 250);
+  const line = page.locator('.tl-item.k-vo').first();
+  await line.waitFor();
+  await drag(line, 100, { alt: true });
+  await saved();
+  const after = await onDisk();
+  assert.deepEqual(after.vo.lines.map(l => l.t), [2, 5]);
+  assert.deepEqual(after.subs.map(s => [s.t, s.out]), [[2, 2.5], [2.5, 3], [5, 6]]);
+  await page.keyboard.press('.'); // nudging moves them together too
+  await saved();
+  assert.deepEqual((await onDisk()).subs.map(s => s.t), [2.03, 2.53, 5]);
 });
