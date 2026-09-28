@@ -94,6 +94,7 @@ On first start, create a project folder (*New project…*), drop a screen record
 <kbd>,</kbd> <kbd>.</kbd> nudge the selection a frame · <kbd>Alt</kbd> while dragging: no snapping ·
 <kbd>Shift</kbd>+<kbd>Del</kbd> ripple delete a clip · <kbd>\</kbd> fit the timeline ·
 <kbd>Ctrl</kbd>+<kbd>R</kbd> render · <kbd>Alt</kbd> menu bar. The full list is under *Help → Keyboard shortcuts*.
+Drag the edges between the panels to resize them (double-click an edge for its default size).
 
 ## 🤝 Where you can help
 

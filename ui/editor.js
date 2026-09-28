@@ -2062,6 +2062,7 @@ function buildMenus() {
       { label: 'Beats van de muziek (tonen + snappen)', checked: !!S.snapBeats, run: () => $('#beats-toggle').click(), disabled: !hasV() },
       { label: 'Tijdlijn inzoomen', icon: 'zoom_in', key: 'Ctrl+scroll', run: () => zoomTimeline(1.25) },
       { label: 'Tijdlijn uitzoomen', icon: 'zoom_out', run: () => zoomTimeline(0.8) },
+      { label: 'Paneelgroottes herstellen', icon: 'reset_wrench', run: resetPanels, disabled: !Object.keys(panelSizes).length },
       bridge && { sep: true },
       bridge && { label: 'Volledig scherm', key: 'F11', icon: 'fullscreen', run: () => bridge.window?.('fullscreen') },
       bridge && { label: 'Herladen', key: 'F5', run: () => location.reload() },
@@ -2304,6 +2305,62 @@ function wireDialogs() {
   }
 }
 
+// ---------- resizable panels ----------
+// Drag the edge between two panels to resize them; double-click an edge for its default size. The sizes are CSS
+// variables on <body>, remembered per install (localStorage), and kept within limits when the window shrinks.
+const PANELS = {
+  lib: { v: '--lib-w', def: 250, min: 190, max: () => innerWidth * 0.4 },
+  insp: { v: '--insp-w', def: 330, min: 270, max: () => innerWidth * 0.4 },
+  tl: { v: '--tl-h', def: 290, min: 150, max: () => innerHeight - 54 - 260 }
+};
+const panelSizes = (() => { try { return JSON.parse(localStorage.getItem('ms-panels') || '{}'); } catch { return {}; } })();
+function applyPanels() {
+  for (const [k, p] of Object.entries(PANELS)) {
+    const size = Math.round(Math.max(p.min, Math.min(p.max(), panelSizes[k] ?? p.def)));
+    document.body.style.setProperty(p.v, `${size}px`);
+  }
+}
+function setPanel(k, size) {
+  const p = PANELS[k];
+  if (size == null) delete panelSizes[k]; else panelSizes[k] = Math.round(Math.max(p.min, Math.min(p.max(), size)));
+  try { localStorage.setItem('ms-panels', JSON.stringify(panelSizes)); } catch {}
+  applyPanels();
+}
+function resetPanels() { for (const k of Object.keys(PANELS)) delete panelSizes[k]; setPanel('lib', null); } // setPanel saves and applies
+function wirePanels() {
+  applyPanels();
+  addEventListener('resize', applyPanels);
+  for (const g of document.querySelectorAll('.gutter')) {
+    const k = g.dataset.panel, p = PANELS[k];
+    g.addEventListener('dblclick', () => setPanel(k, null));
+    // Keyboard: the arrows move the edge (Shift: in bigger steps).
+    g.addEventListener('keydown', e => {
+      const d = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 }[e.key];
+      if (!d) return;
+      e.preventDefault(); e.stopPropagation();
+      const cur = parseFloat(getComputedStyle(document.body).getPropertyValue(p.v)) || p.def;
+      setPanel(k, cur + d * (k === 'lib' ? 1 : -1) * (e.shiftKey ? 48 : 12));
+    });
+    g.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      g.setPointerCapture(e.pointerId);
+      const start = k === 'tl' ? e.clientY : e.clientX;
+      const from = parseFloat(getComputedStyle(document.body).getPropertyValue(p.v)) || p.def;
+      // Library grows to the right, the inspector to the left, the timeline upwards.
+      const dir = k === 'lib' ? 1 : -1;
+      document.body.classList.add(k === 'tl' ? 'resizing-row' : 'resizing-col');
+      g.classList.add('on');
+      const move = ev => setPanel(k, from + dir * ((k === 'tl' ? ev.clientY : ev.clientX) - start));
+      const up = () => {
+        g.removeEventListener('pointermove', move); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+        document.body.classList.remove('resizing-row', 'resizing-col');
+        g.classList.remove('on');
+      };
+      g.addEventListener('pointermove', move); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+    });
+  }
+}
+
 // ---------- uploads ----------
 async function upload(files) {
   let kind = null;
@@ -2365,6 +2422,7 @@ function wireClipboard() {
 function init() {
   addEventListener('keydown', onKey);
   addEventListener('resize', fitStage);
+  wirePanels();
   new ResizeObserver(fitStage).observe($('#stage-fit'));
   $('#video-select').addEventListener('change', e => openVideo(e.target.value));
   $('#btn-undo').onclick = undo;
