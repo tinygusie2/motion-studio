@@ -288,7 +288,11 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
       const method = req.method;
       let m;
 
-      if (p === '/' || p === '/index.html') return sendFile(req, res, join(UI, 'index.html'));
+      // The editor page carries its interface language (setting, else the browser/OS language), so it paints translated.
+      if (p === '/' || p === '/index.html') {
+        const want = ['nl', 'en'].includes(settings.uiLang) ? settings.uiLang : /^nl\b/i.test(req.headers['accept-language'] || '') ? 'nl' : 'en';
+        return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
+      }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
       if ((m = /^\/lib\/(captions|audio)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 

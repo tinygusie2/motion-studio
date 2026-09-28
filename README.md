@@ -54,14 +54,15 @@ videos, markers, a crop window, a fit check for screenshots, and a menu bar with
 Videos are rendered by [HyperFrames](https://hyperframes.heygen.com), which renders HTML + GSAP compositions to
 video. The preview in the editor *is* the composition that gets rendered, so what you see is what you get.
 
-> The interface is in **Dutch** for now. English (and other languages) are one of the most wanted
-> contributions. See [where you can help](#-where-you-can-help).
+> The interface speaks **English** and **Dutch**. It follows your system language; change it under
+> *File → Settings → Interface language*. Want it in your language? That's a great first contribution,
+> see [adding a language](CONTRIBUTING.md#adding-a-language).
 
 ## Getting started
 
 You need [Node.js](https://nodejs.org) 22+ and [ffmpeg](https://ffmpeg.org) on your `PATH`. Voice-over is
 optional and needs a Python with [Kokoro](https://github.com/hexgrad/kokoro) (English, via `hyperframes tts`)
-and/or [Piper](https://github.com/rhasspy/piper) (Dutch voices); set the paths under *Bestand → Instellingen*.
+and/or [Piper](https://github.com/rhasspy/piper) (Dutch voices); set the paths under *File → Settings*.
 
 ```bash
 git clone https://github.com/tinygusie2/motion-studio.git
@@ -87,14 +88,14 @@ On first start, create a project folder (*Nieuw project…*), drop a screen reco
 <kbd>Space</kbd> play · <kbd>S</kbd> split · <kbd>T</kbd> tap mode · <kbd>M</kbd> marker ·
 <kbd>[</kbd> <kbd>]</kbd> previous/next marker or beat · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste
 (also between videos) · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> paste at the same time ·
-<kbd>Ctrl</kbd>+<kbd>R</kbd> render · <kbd>Alt</kbd> menu bar. The full list is under *Help → Sneltoetsen*.
+<kbd>Ctrl</kbd>+<kbd>R</kbd> render · <kbd>Alt</kbd> menu bar. The full list is under *Help → Keyboard shortcuts*.
 
 ## 🤝 Where you can help
 
 Everything below is open for grabs. Comment on (or open) an issue so others know you're on it.
 
 **Good first contributions**
-- 🌍 **Translate the UI**: move the Dutch strings into a small i18n table and add English (then any language you speak)
+- 🌍 **Translate the UI** into your language: one table in `ui/i18n.js` (see [adding a language](CONTRIBUTING.md#adding-a-language))
 - 📱 **New device frames**: an Android phone, a laptop, a smartwatch (see [adding a layout](docs/ARCHITECTURE.md#adding-a-layout))
 - 🎨 **Caption and callout styles**: new looks are mostly CSS and a few GSAP lines
 - 📝 **Docs**: tutorials, a "your first video" guide, GIFs of features

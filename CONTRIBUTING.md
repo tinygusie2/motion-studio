@@ -8,7 +8,8 @@ small, and nobody expects you to know the whole codebase. This guide gets you fr
 - **Report a bug**: tell us what you did, what you expected and what happened. A screenshot or the render
   log helps a lot.
 - **Suggest a feature**: describe the video you were trying to make and what got in the way.
-- **Translate**: the interface is Dutch; English and other languages are very welcome.
+- **Translate**: the interface is in English and Dutch; every other language is very welcome
+  (see [adding a language](#adding-a-language)).
 - **Improve the docs**: guides, GIFs, fixes to this file.
 - **Design**: device frames, caption styles, callout looks, end cards.
 - **Code**: fix bugs, build features, add tests.
@@ -59,8 +60,19 @@ you:
 - Small helpers over abstractions. The editor builds DOM with the `el()` helper, not templates.
 - Comments explain *why*, not *what*. A one-line comment above a non-obvious block is the norm.
 - Every change to a video goes through `commit()` in the editor, so undo/redo and saving keep working.
-- User-facing text is Dutch today; if you add strings, keep them short and put them where the other strings are
-  (a translation layer is on the wish list).
+- User-facing text is written in Dutch in the code and translated on screen by `ui/i18n.js`. When you add or
+  change a string, add its English line to the `en` table too (`npm test` checks that placeholders match).
+
+### Adding a language
+
+1. In `ui/i18n.js`, copy the `en` table to a new one (say `de`) and translate the values. Keys stay Dutch.
+   `{0}`, `{1}` stand for text that is filled in (a name, a number); keep them in your translation, in any order.
+2. Add it to `tables` and to `languages` (`de: 'Deutsch'`), and add the code to the list in `src/server.mjs`
+   (search for `uiLang`) and an `<option class="no-i18n">` to `#set-lang` in `ui/index.html`.
+3. Run the app, pick your language under *File → Settings* and click around. Text that stays Dutch is a missing
+   key: copy the exact Dutch text into your table.
+
+User content (video names, captions, file names, the video itself) is never translated.
 
 ### Checking your change
 

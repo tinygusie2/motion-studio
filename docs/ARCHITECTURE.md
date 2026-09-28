@@ -172,6 +172,16 @@ any video or project:
 `markers` (M, editor only) and the music's beats are snap targets, and [ and ] step through them. Beats come from
 `GET /api/beats/<file>`. It runs `hyperframes beats` once per file and caches the result in `vo/beats/`.
 
+## Interface language
+
+The editor is written with Dutch strings. `ui/i18n.js` translates what reaches the screen: a MutationObserver
+rewrites text nodes and `title`/`placeholder`/`aria-label` attributes, and `confirm()`/`prompt()` are wrapped.
+Keys are the Dutch text; `{0}` placeholders become regex groups whose contents are translated recursively, and text
+joined with ` · `, `, ` or newlines is translated piece by piece. Elements matching `SKIP` (user content such as
+timeline labels, file names and the video list) are left alone; add the `no-i18n` class to anything else that
+must stay as is. The server picks the language (the `uiLang` setting, else the browser's `Accept-Language`) and
+puts it in `<html data-ui-lang>`, so the first paint is already translated. The preview is never translated.
+
 ## Deleting assets
 
 `GET /api/assets/<clips|vo|brand|fonts>/<name>/usage` lists the videos and brands that use a file. `DELETE` on

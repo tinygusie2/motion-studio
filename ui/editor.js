@@ -2,6 +2,7 @@
 import { captionStyles, captionStyleHints, captionStyle, splitSub, parseSubtitles } from '/lib/captions.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
+import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -621,7 +622,7 @@ function rows() {
   R.push({ key: 'sub', label: 'Ondertitels', icon: 'subtitles', items: v.subs.map((x, i) => ({ kind: 'sub', i, s: x.t, e: x.out, text: plain(x.text), cls: v.captions?.off ? 'off' : '' })) });
   if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true }] });
   if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m }] }); }
-  R.push({ key: 'end', label: 'Eindkaart', icon: 'flag', items: [{ kind: 'end', i: 0, s: end, e: dur, text: plain(v.tagline) || 'Eindkaart' }] });
+  R.push({ key: 'end', label: 'Eindkaart', icon: 'flag', items: [{ kind: 'end', i: 0, s: end, e: dur, text: plain(v.tagline) || tr('Eindkaart') }] });
   return R;
 }
 
@@ -1778,15 +1779,19 @@ function openSettings() {
   $('#set-piper').value = s.piperVoices || '';
   $('#set-piper').placeholder = d.piperVoices || 'map met .onnx stemmen';
   $('#set-downloads').checked = s.copyToDownloads !== false;
+  $('#set-lang').value = s.uiLang || 'auto';
   $('#set-detected').textContent = `Nu gebruikt: Python ${d.python || '—'} · Piper-stemmen ${d.piperVoices || '—'}. Laat leeg voor automatisch.`;
   $('#dlg-settings').showModal();
 }
 async function saveSettings() {
+  const langBefore = S.settings.uiLang || 'auto';
   applyState(await api('/api/settings', { method: 'PUT', body: JSON.stringify({
     hyperframes: $('#set-hf').value.trim() || undefined, python: $('#set-python').value.trim(),
-    piperVoices: $('#set-piper').value.trim(), copyToDownloads: $('#set-downloads').checked
+    piperVoices: $('#set-piper').value.trim(), copyToDownloads: $('#set-downloads').checked, uiLang: $('#set-lang').value
   }) }));
   $('#dlg-settings').close();
+  // A new interface language comes with the page itself: save the video, then reload.
+  if ((S.settings.uiLang || 'auto') !== langBefore) { if (S.saveTimer) await flushSave(); return location.reload(); }
   if (V()) renderInspector();
   toast('Instellingen opgeslagen');
 }
@@ -1909,6 +1914,7 @@ function init() {
   addEventListener('beforeunload', e => { if (S.saveTimer) { flushSave(); e.preventDefault(); } });
 }
 
+installTranslations();
 init();
 wireDialogs();
 wireClipboard();

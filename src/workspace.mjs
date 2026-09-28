@@ -23,7 +23,8 @@ const settingDefaults = {
   workspace: null, recents: [],
   hyperframes: 'hyperframes@0.8.73',
   python: '', piperVoices: '',
-  copyToDownloads: true
+  copyToDownloads: true,
+  uiLang: 'auto'
 };
 export function loadSettings() { return { ...settingDefaults, ...readJson(SETTINGS_FILE, {}) }; }
 export function saveSettings(s) { mkdirSync(SETTINGS_DIR, { recursive: true }); writeJson(SETTINGS_FILE, s); return s; }

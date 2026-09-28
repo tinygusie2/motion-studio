@@ -83,6 +83,7 @@ export function enhanceSelect(sel) {
   btn.update = () => {
     const o = sel.selectedOptions[0];
     label.textContent = o ? o.textContent : '';
+    label.classList.toggle('no-i18n', !!o?.classList.contains('no-i18n')); // e.g. language names stay in their own language
     label.classList.toggle('placeholder', !o || o.value === '');
     btn.disabled = sel.disabled;
   };
@@ -102,7 +103,7 @@ export function enhanceSelect(sel) {
       el.append(...opts.map(o => {
         const acts = (ex.actions?.(o.value) || []).map(a => h('button', { type: 'button', class: `dd-act${a.danger ? ' danger' : ''}`, title: a.title, onclick: e => { e.stopPropagation(); open?.close(); a.run(); } }, icon(a.icon)));
         const hint = ex.hint?.(o.value) ?? o.dataset.hint;
-        return h('div', { class: `dd-opt${o.value === sel.value ? ' on' : ''}${o.disabled ? ' disabled' : ''}`, role: 'option', 'data-value': o.value, onclick: () => !o.disabled && pick(o.value) },
+        return h('div', { class: `dd-opt${o.value === sel.value ? ' on' : ''}${o.disabled ? ' disabled' : ''} ${o.className}`.trim(), role: 'option', 'data-value': o.value, onclick: () => !o.disabled && pick(o.value) },
           icon(o.value === sel.value ? 'check' : ''), h('span', { class: 'dd-text' }, h('span', {}, o.textContent), hint ? h('small', {}, hint) : null), ...acts);
       }));
       for (const f of ex.footer?.() || []) el.append(h('div', { class: 'dd-opt dd-foot', role: 'option', onclick: () => { open?.close(); f.run(); } }, icon(f.icon), h('span', { class: 'dd-text' }, f.label)));

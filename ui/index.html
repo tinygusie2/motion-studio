@@ -133,7 +133,7 @@
     </div>
     <div id="proj-create" hidden>
       <label>Naam<input id="proj-name" placeholder="Mijn app TikToks" /></label>
-      <label>Map<div class="path-row"><input id="proj-path" placeholder="C:\Users\…\Documents\MijnApp-videos" /><button id="proj-browse" class="ghost">Kies…</button></div></label>
+      <label>Map<div class="path-row"><input id="proj-path" placeholder="C:\Users\…\Documents\MyApp-videos" /><button id="proj-browse" class="ghost">Kies…</button></div></label>
       <div class="dlg-actions"><button id="proj-create-go" class="primary">Aanmaken</button></div>
     </div>
     <p class="error" id="proj-error"></p>
@@ -161,6 +161,7 @@
     <label>Python met Kokoro/Piper (TTS)<div class="path-row"><input id="set-python" /><button data-browse="set-python" data-file="1" class="ghost">Kies…</button></div></label>
     <label>Map met Piper-stemmen (.onnx)<div class="path-row"><input id="set-piper" /><button data-browse="set-piper" class="ghost">Kies…</button></div></label>
     <label class="check"><input id="set-downloads" type="checkbox" /> Renders ook naar Downloads kopiëren</label>
+    <label>Taal van de interface<select id="set-lang"><option value="auto">Automatisch</option><option value="nl" class="no-i18n">Nederlands</option><option value="en" class="no-i18n">English</option></select></label>
     <p class="hint" id="set-detected"></p>
     <div class="dlg-actions"><button id="set-cancel" class="ghost">Annuleren</button><button id="set-save" class="primary">Opslaan</button></div>
   </dialog>
@@ -177,7 +178,7 @@
     <div class="batch-tools"><button id="batch-all" class="ghost">Alles</button><button id="batch-none" class="ghost">Niets</button></div>
     <div id="batch-list"></div>
     <p class="error" id="batch-error"></p>
-    <div class="dlg-actions"><button id="batch-cancel" class="ghost">Annuleren</button><button id="batch-go" class="primary"><span class="ms">video_library</span>Renderen</button></div>
+    <div class="dlg-actions"><button id="batch-cancel" class="ghost">Annuleren</button><button id="batch-go" class="primary"><span class="ms">video_library</span>Start renderen</button></div>
   </dialog>
 
   <dialog id="dlg-crop">
