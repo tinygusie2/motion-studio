@@ -71,7 +71,7 @@ npm install
 npm start
 ```
 
-On first start, create a project folder (*Nieuw project…*), drop a screen recording on the window and click
+On first start, create a project folder (*New project…*), drop a screen recording on the window and click
 *New video*.
 
 | Command | What it does |
