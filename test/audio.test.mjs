@@ -39,3 +39,29 @@ test('musicMix: start, trim and source offset', () => {
   assert.deepEqual([m.start, m.dur, m.media], [2, 3, 4]);
   assert.equal(musicMix(video({ start: 8 })).dur, 2);
 });
+
+test('voiceSegments: a generated voice-over plays each line from its own spot in the file, wherever the line is now', async () => {
+  const { voiceSegments } = await import('../src/audio.mjs');
+  const v = { id: 'demo', dur: 10, audio: 'demo.wav', vo: { file: 'demo.wav', lines: [
+    { t: 5, at: 1, len: 2, text: 'moved later' },
+    { t: 3.5, at: 3.5, len: 1, text: 'stayed' },
+    { t: 8, text: 'new, not spoken yet' }
+  ] } };
+  assert.deepEqual(voiceSegments(v), [
+    { t: 5, at: 1, dur: 2.15 },     // the tail after the last word comes along
+    { t: 3.5, at: 3.5, dur: 1.15 }
+  ]);
+  // The tail stops where the next line starts in the file, and at the end of the video.
+  assert.equal(voiceSegments({ ...v, vo: { file: 'demo.wav', lines: [{ t: 0, at: 0, len: 2 }, { t: 9.5, at: 2.05, len: 1 }] } })[0].dur, 2.05);
+  assert.equal(voiceSegments({ ...v, vo: { file: 'demo.wav', lines: [{ t: 9.5, at: 2.05, len: 1 }] } })[0].dur, 0.5);
+  // An uploaded recording, or a voice-over made before lines kept their spot: one track from 0.
+  assert.equal(voiceSegments({ ...v, audio: 'upload.wav' }), null);
+  assert.equal(voiceSegments({ ...v, vo: { lines: v.vo.lines } }), null);
+});
+
+test('build: the voice plays per line, so a moved line takes its audio along', async () => {
+  const { build } = await import('../src/template.mjs');
+  const html = build({ id: 'demo', dur: 10, end: 9, audio: 'demo.wav', audioVol: 0.8, vo: { file: 'demo.wav', lines: [{ t: 5, at: 1, len: 2, text: 'a' }] } }, { name: 'X', theme: {} });
+  assert.match(html, /<audio id="vo0" src="assets\/vo\/demo\.wav" data-start="5" data-duration="2\.15" data-media-start="1" data-volume="0\.8"/);
+  assert.doesNotMatch(html, /id="vo" /);
+});

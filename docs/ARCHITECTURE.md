@@ -120,6 +120,12 @@ The style comes from `captionDefaults` < `brand.captions` < `video.captions`. It
 
 `audio` is the voice track (a generated voice-over or an upload). `audioVol` is its level (0..1, `data-volume`).
 
+A generated voice-over is one file (`vo.file`) with every line mixed in at its time; each line keeps that spot as
+`at`. The template then plays the voice per line (`voiceSegments` in `src/audio.mjs`): the piece of the file from `at`,
+at the line's current `t`. Moving a line on the timeline therefore moves its audio, without making the voice-over
+again. Changing a line's text drops its `at` (the audio no longer fits) until the voice-over is made again. Captions
+that start within a line's time move along with it in the editor.
+
 `music` is a bed on its own track: `{ src, start, media, dur?, vol, fadeIn, fadeOut, duck, carve }`. Its level
 is written as a `data-automation` volume lane. The lane contains the fades, and it lowers the level by `duck`
 while the voice speaks. "Speaking" means the VO lines that have a length, merged across short pauses; a voice

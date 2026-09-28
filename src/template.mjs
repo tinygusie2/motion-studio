@@ -2,7 +2,7 @@
 // chips + end card. Brand (colors, logo, font, end card) and layout (which device) come from the
 // workspace, so the same template serves different apps.
 import { captionGroups, captionStyle } from './captions.mjs';
-import { musicMix } from './audio.mjs';
+import { musicMix, voiceSegments } from './audio.mjs';
 
 export const W = 1080, H = 1920;
 
@@ -183,6 +183,12 @@ export function build(v, brand, fmt = '9:16') {
         </div>`;
   }).join('\n        ');
   const mix = v.music?.src ? musicMix(v) : null;
+  // The voice: one track, or a piece of the generated voice-over per line, wherever that line is now.
+  const voVol = v.audioVol != null && v.audioVol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +v.audioVol))}"` : '';
+  const segs = voiceSegments(v);
+  const voiceTags = !v.audio ? '' : segs
+    ? segs.map((s, i) => `      <audio id="vo${i}" src="assets/vo/${esc(v.audio)}" data-start="${s.t}" data-duration="${s.dur}" data-media-start="${s.at}"${voVol} data-track-index="${60 + i}"></audio>\n`).join('')
+    : `      <audio id="vo" src="assets/vo/${esc(v.audio)}" data-start="0" data-duration="${DUR}"${voVol} data-track-index="40"></audio>\n`;
   // Captions: one element per on-screen word group, one span per word (timed in the script).
   const cs = captionStyle(brand, v);
   cs.y = v.captions?.pos?.[formatOf(fmt)] ?? cs.y;
@@ -483,8 +489,7 @@ export function build(v, brand, fmt = '9:16') {
       <div id="captions" data-scale="${capMap}" class="S-${esc(cs.style)}">
         ${captions}
       </div>
-${v.audio ? `      <audio id="vo" src="assets/vo/${esc(v.audio)}" data-start="0" data-duration="${DUR}"${v.audioVol != null && v.audioVol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +v.audioVol))}"` : ''} data-track-index="40"></audio>
-` : ''}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" ${mix.fx ? `data-fx-chain="${esc(JSON.stringify(mix.fx.chain))}" ` : ''}data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }, ...(mix.fx?.lanes || [])] }))}" data-track-index="41"></audio>
+${voiceTags}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" ${mix.fx ? `data-fx-chain="${esc(JSON.stringify(mix.fx.chain))}" ` : ''}data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }, ...(mix.fx?.lanes || [])] }))}" data-track-index="41"></audio>
 ` : ''}
       <div id="endcard">
         <div id="end-mark"><div id="end-ring"></div><div id="end-logo">${brand.logoHtml || ''}</div></div>
