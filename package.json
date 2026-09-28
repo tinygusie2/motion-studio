@@ -22,7 +22,7 @@
     "start": "electron .",
     "serve": "node src/server.mjs",
     "build": "node src/cli.mjs build",
-    "pack": "electron-packager . \"Motion Studio\" --platform=win32 --arch=x64 --out=dist --overwrite --icon=resources/icon.ico --ignore=^/dist --ignore=^/scripts --ignore=^/docs --ignore=^/test --ignore=^/.git --ignore=^/.claude --no-asar",
+    "pack": "node scripts/pack.mjs",
     "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1",
     "sign:cert": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-selfsigned-cert.ps1",
     "dist": "npm run pack && npm run sign",
