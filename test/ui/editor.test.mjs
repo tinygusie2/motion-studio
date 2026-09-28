@@ -194,3 +194,19 @@ uiTest('a click on an empty spot of the timeline, Esc or the close button desele
   await page.locator('.insp-close').click();
   assert.equal(await selected(), 0);
 });
+
+uiTest('panel edges can be dragged, are remembered, and reset with a double-click', async t => {
+  await open(t);
+  const width = sel => page.locator(sel).evaluate(n => n.getBoundingClientRect().width);
+  const g = await page.locator('.gutter.lib').boundingBox();
+  await page.mouse.move(g.x + g.width / 2, 300);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2 + 100, 300, { steps: 5 });
+  await page.mouse.up();
+  assert.equal(Math.round(await width('#library')), 350);
+  await page.reload();
+  await page.locator('.tl-item').first().waitFor();
+  assert.equal(Math.round(await width('#library')), 350, 'remembered');
+  await page.locator('.gutter.lib').dblclick();
+  assert.equal(Math.round(await width('#library')), 250);
+});
