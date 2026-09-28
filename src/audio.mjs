@@ -10,6 +10,23 @@ export const CARVE_BANDS = [[800, 1.4, 0.6], [1600, 1.4, 1], [3000, 1.4, 0.7]];
 const CARVE_DB = 12;
 const ATTACK = 0.25, RELEASE = 0.6, MERGE_GAP = 0.7;
 
+// A generated voice-over (v.vo.file, made by "Voice-over maken") is one file with every line mixed in at the time it
+// had then; each line remembers that spot (`at`). Played back per line, a line that was moved later on the timeline
+// takes its own piece of the file along: [{ t, at, dur }] (video time, file time, length). A line without `at` (new,
+// or its text changed since) has no audio yet. null: play v.audio as one track from 0 (an uploaded recording).
+const TAIL = 0.15; // keep the breath and reverb after the last word
+export function voiceSegments(v) {
+  if (!v.audio || !v.vo?.file || v.vo.file !== v.audio) return null;
+  const dur = v.dur ?? 15;
+  const lines = (v.vo.lines || []).filter(l => l.at != null && l.len > 0);
+  const ats = lines.map(l => l.at).sort((a, b) => a - b);
+  return lines.map(l => {
+    const next = ats.find(a => a > l.at + 0.001) ?? Infinity; // don't play into the next line's first word
+    const len = Math.min(l.len + TAIL, next - l.at, dur - l.t);
+    return { t: l.t, at: l.at, dur: +len.toFixed(3) };
+  }).filter(s => s.dur > 0.05 && s.t < dur);
+}
+
 // When the voice is speaking, in video time: voice-over lines with a known length, merged across short pauses.
 // A voice track without VO lines (an uploaded recording) counts as speaking the whole time.
 export function speechSpans(v) {

@@ -276,8 +276,9 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     log('Mixen met ffmpeg…');
     await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...lines.flatMap(l => ['-i', l.file]), '-filter_complex', mix, '-map', '[out]', '-ar', '48000', '-ac', '2', out], {}, log);
     const fresh = w.readSpec(id);
-    fresh.vo = { ...(fresh.vo || {}), voice, speed };
-    fresh.vo.lines = (fresh.vo.lines || []).map(l => { const m = lines.find(x => x.t === l.t && x.text === l.text); return m ? { ...l, len: m.len } : l; });
+    // file + at: where each line sits in the mix, so a line moved later takes its own audio along (voiceSegments).
+    fresh.vo = { ...(fresh.vo || {}), voice, speed, file: `${id}.wav` };
+    fresh.vo.lines = (fresh.vo.lines || []).map(l => { const m = lines.find(x => x.t === l.t && x.text === l.text); return m ? { ...l, len: m.len, at: m.t } : l; });
     fresh.audio = `${id}.wav`;
     w.writeSpec(id, fresh);
     return { audio: fresh.audio, lines: fresh.vo.lines };
@@ -392,7 +393,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         if (ws.hasSpec(id)) return send(res, 409, { error: `"${id}" bestaat al.` });
         const v = normalize({ ...spec, id });
         delete v.audio; delete v.dual;
-        if (v.vo) v.vo.lines = (v.vo.lines || []).map(({ len, ...l }) => l);
+        if (v.vo) { delete v.vo.file; v.vo.lines = (v.vo.lines || []).map(({ len, at, ...l }) => l); }
         ws.writeSpec(id, v);
         return send(res, 200, v);
       }
