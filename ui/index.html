@@ -103,9 +103,11 @@
   <dialog id="dlg-new">
     <form method="dialog">
       <h2>Nieuwe video</h2>
+      <p class="hint">Kies een starter. Hij wordt gevuld met de clips van dit project, daarna pas je alles aan.</p>
+      <div id="tpl-grid" role="radiogroup"></div>
+      <label>Of kopieer een video<select name="base"></select></label>
       <label>Naam (id)<input name="id" required pattern="[a-z0-9][a-z0-9\-]*" placeholder="v11-deload" /></label>
       <p class="hint">Kleine letters, cijfers en streepjes. Wordt ook de bestandsnaam van de render.</p>
-      <label>Begin vanaf<select name="base"></select></label>
       <label>Merk<select name="brand"></select></label>
       <p class="error" id="new-error"></p>
       <div class="dlg-actions">

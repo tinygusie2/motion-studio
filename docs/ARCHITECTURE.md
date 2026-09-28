@@ -62,6 +62,15 @@ Every project is a folder. Motion Studio can switch between them (Bestand → Pr
 To build without the app, run `node src/cli.mjs build <workspace> [id,id…]`, then `npx hyperframes render` in
 `<workspace>/projects`.
 
+## Starters
+
+`src/starters.mjs` holds the ready-made videos offered under *New video*. Each starter has a label, a hint, an
+icon, a layout and a `make(text, ctx)` that returns the spec's items; `ctx` has the project's clips (and their
+lengths when known) and the device size per layout, so taps and zoom focus points land on the screen.
+`starterSpec()` adds the brand, the texts in the brand's language (English when there is no table for it) and empty
+lists for everything else. `test/starters.test.mjs` checks that every starter builds and ends before the end card.
+To add one: add an entry to `starters`, its texts to `text.en` and `text.nl`, and its label and hint to `ui/i18n.js`.
+
 ## Adding a layout
 
 A new app with a different UI usually needs a different frame around the recording. In `src/template.mjs`:

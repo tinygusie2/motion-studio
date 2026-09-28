@@ -235,7 +235,15 @@ const en = {
   '{0} overgeslagen ({1})': '{0} skipped ({1})', '{0} items verwijderd': '{0} items deleted',
   'Beats gevonden in {0}: {1} beats, ±{2} BPM': 'Beats found in {0}: {1} beats, ±{2} BPM', 'Beats niet gevonden: {0}': 'Beats not found: {0}',
   'Uploaden en omzetten: {0}…': 'Uploading and converting: {0}…', '{0} toegevoegd': '{0} added', 'Upload mislukt: {0}': 'Upload failed: {0}',
-  'Kopie van {0}': 'Copy of {0}', 'Nieuwe video': 'New video'
+  'Kopie van {0}': 'Copy of {0}', 'Nieuwe video': 'New video',
+  // ---------- starters ----------
+  'Kies een starter. Hij wordt gevuld met de clips van dit project, daarna pas je alles aan.': 'Pick a starter. It is filled with this project\'s clips; then you change whatever you like.',
+  'Of kopieer een video': 'Or copy a video', 'Leeg': 'Empty', 'Alleen een kop en je eerste clip.': 'Just a headline and your first clip.',
+  'App-lancering': 'App launch', 'Hook, drie punten, twee callouts en een zoom. Voor een nieuwe app of update.': 'Hook, three points, two callouts and a zoom. For a new app or an update.',
+  'Uitleg in 3 stappen': 'How-to in 3 steps', 'Een kop per stap, met een tik op het scherm en een marker bij elke stap.': 'A headline per step, with a tap on the screen and a marker at every step.',
+  'Voor en na': 'Before and after', 'Twee telefoons naast elkaar: links hoe het was, rechts met jouw app.': 'Two phones side by side: how it was on the left, with your app on the right.',
+  'Website-rondleiding': 'Website tour', 'Browservenster met muisklikken en twee zooms. Voor web-apps en landingspagina\'s.': 'Browser window with mouse clicks and two zooms. For web apps and landing pages.',
+  'Snelle tip': 'Quick tip', 'Beeldvullend met grote ondertitels. Voor een korte tip of een how-to zonder apparaat.': 'Full screen with big captions. For a short tip or a how-to without a device.'
 };
 
 export const tables = { en };

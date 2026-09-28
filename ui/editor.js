@@ -1,6 +1,7 @@
 // Motion Studio editor. Edits specs/<id>.json (the same format build.mjs reads) with a live preview.
 import { captionStyles, captionStyleHints, captionStyle, splitSub, parseSubtitles } from '/lib/captions.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
+import { starters, starterSpec } from '/lib/starters.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -1691,18 +1692,37 @@ function blankSpec(brandId, layout = 'phone') {
 function newVideo(baseId) {
   if (!S.workspace) return openProjects();
   const dlg = $('#dlg-new'), form = dlg.querySelector('form');
-  form.base.replaceChildren(el('option', { value: '' }, 'Leeg sjabloon'), ...S.list.map(v => el('option', { value: v.id }, `Kopie van ${v.id}`)));
+  // Starter cards; picking a video to copy switches them off, picking a card clears the copy.
+  let starter = baseId ? null : 'launch';
+  const cards = [['', { label: 'Leeg', hint: 'Alleen een kop en je eerste clip.', icon: 'draft' }], ...Object.entries(starters)].map(([id, st]) =>
+    el('button', { type: 'button', class: 'tpl', role: 'radio', 'data-id': id, onclick: () => { starter = id; form.base.value = ''; form.base.dispatchEvent(new Event('change')); paint(); } },
+      icon(st.icon), el('b', {}, st.label), el('small', {}, st.hint)));
+  const paint = () => {
+    cards.forEach(c => { const on = !form.base.value && c.dataset.id === starter; c.classList.toggle('on', on); c.setAttribute('aria-checked', on); });
+    $('#tpl-grid').classList.toggle('off', !!form.base.value);
+    const taken = new Set(S.list.map(v => v.id));
+    if (!form.id.dataset.touched && !form.base.value) { let id = starter || 'video', n = 1; while (taken.has(n > 1 ? `${id}-${n}` : id)) n++; form.id.value = n > 1 ? `${id}-${n}` : id; }
+  };
+  $('#tpl-grid').replaceChildren(...cards);
+  form.base.replaceChildren(el('option', { value: '' }, 'Geen'), ...S.list.map(v => el('option', { value: v.id }, v.id)));
   form.base.value = baseId || '';
+  form.base.onchange = () => { if (!form.base.value && starter == null) starter = 'launch'; paint(); };
+  form.id.oninput = () => (form.id.dataset.touched = '1');
+  delete form.id.dataset.touched;
   form.brand.replaceChildren(...S.brands.map(b => el('option', { value: b.id }, b.name)));
   form.brand.value = (baseId && S.list.find(v => v.id === baseId)?.brand) || S.workspace.defaultBrand || S.brands[0]?.id;
   form.id.value = baseId ? `${baseId}-2` : '';
+  paint();
   $('#new-error').textContent = '';
   dlg.showModal();
   form.onsubmit = async e => {
     if (e.submitter?.value !== 'ok') return;
     e.preventDefault();
     try {
-      const spec = form.base.value ? await api(`/api/videos/${form.base.value}`) : blankSpec(form.brand.value, V() ? layoutOf() : 'phone');
+      const b = S.brands.find(x => x.id === form.brand.value) || {};
+      const spec = form.base.value ? await api(`/api/videos/${form.base.value}`)
+        : starter ? starterSpec(starter, { brandId: form.brand.value, brandName: b.name, lang: b.lang, clips: S.clips, clipDur: S.clipDur, dev: S.devs || {} })
+        : blankSpec(form.brand.value, V() ? layoutOf() : 'phone');
       spec.brand = form.brand.value;
       const made = await api('/api/videos', { method: 'POST', body: JSON.stringify({ id: form.id.value.trim(), spec }) });
       dlg.close();

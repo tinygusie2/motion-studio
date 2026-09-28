@@ -294,7 +294,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
       }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
-      if ((m = /^\/lib\/(captions|audio)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
+      if ((m = /^\/lib\/(captions|audio|starters)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 
       if (p === '/api/state' && method === 'GET') return send(res, 200, state());
       if (p === '/api/settings' && method === 'PUT') { settings = saveSettings({ ...settings, ...(await readJsonBody(req)) }); return send(res, 200, state()); }

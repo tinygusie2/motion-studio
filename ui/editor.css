@@ -370,3 +370,13 @@ button.tapmode.on { background: var(--orange); color: #3a2108; border-color: var
 #tl-ruler .beat { position: absolute; bottom: 0; height: 8px; width: 0; border-left: 1px solid #c1ec8a88; pointer-events: none; }
 #tl-ruler .marker { position: absolute; top: 2px; width: 12px; height: 16px; margin-left: -6px; background: var(--orange); clip-path: polygon(0 0, 100% 0, 100% 65%, 50% 100%, 0 65%); cursor: grab; z-index: 2; }
 #tl-ruler .marker:hover { filter: brightness(1.2); }
+
+/* New video: starter cards */
+#dlg-new { width: 600px; }
+#tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 12px; }
+.tpl { flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; white-space: normal; text-align: left; border-radius: 12px; min-height: 92px; }
+.tpl .ms { font-size: 22px; color: var(--accent); }
+.tpl b { font-size: 13px; }
+.tpl small { color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+.tpl.on { border-color: var(--accent); background: #1c2233; box-shadow: 0 0 0 1px var(--accent) inset; }
+#tpl-grid.off .tpl { opacity: .45; }
