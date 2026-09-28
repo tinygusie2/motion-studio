@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { build, layouts, formats, stageFit, clipPlacement, placeIn, W, H } from '../src/template.mjs';
+import { build, layouts, formats, stageFit, clipPlacement, placeIn, clipTransitions, transitions, W, H } from '../src/template.mjs';
 
 const brand = { name: 'MyApp', lang: 'en', theme: {} };
 const video = extra => ({
@@ -59,4 +59,28 @@ test('music: carve chain and lanes end up on the bed', () => {
   const html = build(video({ audio: 'vo.wav', vo: { lines: [{ t: 1, text: 'hi', len: 2 }] }, music: { src: 'bed.wav', carve: 0.5 } }), brand);
   assert.match(html, /<audio id="music"[^>]*data-fx-chain="[^"]*peaking/);
   assert.match(html, /fx\.carve2\.gain/);
+});
+
+test('clipTransitions: the clip before a transition is held for the overlap, the incoming one stacks on top', () => {
+  const list = [{ start: 3, dur: 2, tr: 'slide' }, { start: 0.5, dur: 2.5 }, { start: 6, dur: 1, tr: 'fade', trDur: 0.3 }, { start: 5, dur: 1 }];
+  const { hold, z, trs } = clipTransitions(list);
+  assert.deepEqual(z, [2, 1, 4, 3]);
+  assert.deepEqual(hold, [0, transitions.slide.dur, 0, 0.3]);
+  assert.deepEqual(trs, [{ to: 0, from: 1, t: 3, d: transitions.slide.dur, type: 'slide' }, { to: 2, from: 3, t: 6, d: 0.3, type: 'fade' }]);
+  // After a gap there is nothing to hand over from: the clip only animates in. Unknown types are a hard cut.
+  assert.deepEqual(clipTransitions([{ start: 0, dur: 1 }, { start: 2, dur: 1, tr: 'whip' }]).trs[0].from, -1);
+  assert.equal(clipTransitions([{ start: 0, dur: 1 }, { start: 1, dur: 1, tr: 'spin' }]).trs.length, 0);
+});
+
+test('build: transitions extend the outgoing clip and animate both', () => {
+  const clips = [{ src: 'a.png', start: 0.5, dur: 2 }, { src: 'b.mp4', start: 2.5, dur: 3, tr: 'whip' }];
+  const html = build(video({ clips }), brand);
+  assert.match(html, /id="demo-clip0"[^>]*style="z-index:1"[^>]*data-duration="2.3"/);
+  assert.match(html, /id="demo-clip1"[^>]*style="z-index:2"[^>]*data-duration="3"/);
+  assert.match(html, /const clipTrs = \[\{"to":"demo-clip1","from":"demo-clip0","t":2.5,"d":0.3,"type":"whip"\}\]/);
+  // Without transitions the clips are written as before.
+  assert.doesNotMatch(build(video(), brand), /z-index:1"/);
+  // The second phone's clips only count in the dual layout.
+  assert.match(build(video({ clips2: clips }), brand), /const clipTrs = \[\];/);
+  assert.match(build(video({ layout: 'dual', clips2: clips }), brand), /"to":"demo-clip2-1","from":"demo-clip2-0"/);
 });

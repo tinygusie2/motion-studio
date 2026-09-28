@@ -112,6 +112,8 @@ const en = {
   'Schuif om het beginpunt in de opname te kiezen.': 'Slide to pick the starting point in the recording.', 'Combineer met een zoom voor beweging.': 'Combine with a zoom for movement.',
   'Start in video (s)': 'Start in video (s)', 'Duur (s)': 'Length (s)', 'Begin in bron (s)': 'Start in source (s)',
   'Let op: de clip loopt {0}s voorbij het einde van de opname ({1}s).': 'Note: the clip runs {0}s past the end of the recording ({1}s).',
+  'Overgang naar deze clip': 'Transition into this clip', 'Harde overgang': 'Hard cut', 'Duur overgang (s)': 'Transition length (s)',
+  'Overvloeien': 'Crossfade', 'Schuiven': 'Slide', 'Zwiep': 'Whip', 'Inzoomen': 'Zoom in',
   'Plaatsing in het scherm': 'Placement on the screen', 'Vullen': 'Fill', 'Passend': 'Fit', 'Bijsnijden…': 'Crop…', 'Uitsnede…': 'Crop…', 'Uitsnede weghalen': 'Remove crop',
   'Vult het hele scherm; wat niet past valt weg (bovenkant blijft staan)': 'Fills the whole screen; what doesn\'t fit is cut off (the top stays)',
   'Alles blijft zichtbaar; de rest van het scherm krijgt de achtergrondkleur': 'Everything stays visible; the rest of the screen gets the background color',
