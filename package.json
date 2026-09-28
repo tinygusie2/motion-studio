@@ -1,7 +1,7 @@
 {
   "name": "motion-studio",
   "productName": "Motion Studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Desktop editor for short motion-graphics videos of your app: device mockups, callouts, zooms, captions, voice-over and music, rendered with HyperFrames.",
   "license": "MIT",
   "repository": {

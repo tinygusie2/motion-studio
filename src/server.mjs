@@ -421,7 +421,12 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     }
   });
 
-  await new Promise((ok, fail) => { server.once('error', fail); server.listen(port, host, ok); });
+  // `port` may be a list: the first free one wins (0 = any free port).
+  const listen = p => new Promise((ok, fail) => { server.once('error', fail); server.listen(p, host, () => { server.off('error', fail); ok(); }); });
+  const tries = [].concat(port);
+  for (const [i, p] of tries.entries()) {
+    try { await listen(p); break; } catch (e) { if (e.code !== 'EADDRINUSE' || i === tries.length - 1) throw e; }
+  }
   return { server, port: server.address().port, url: `http://${host}:${server.address().port}` };
 }
 

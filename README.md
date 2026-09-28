@@ -72,7 +72,7 @@ npm start
 ```
 
 On first start, create a project folder (*Nieuw project…*), drop a screen recording on the window and click
-*Nieuwe video*.
+*New video*.
 
 | Command | What it does |
 | --- | --- |

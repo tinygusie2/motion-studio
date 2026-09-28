@@ -1,4 +1,4 @@
-// Electron shell: runs the editor backend in-process on a free localhost port and shows it in a window.
+// Electron shell: runs the editor backend in-process on a localhost port and shows it in a window.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,7 +39,9 @@ function buildMenu() {
 }
 
 async function createWindow() {
-  const { url } = await startServer({ port: 0 });
+  // A fixed port keeps the page's origin, and with it localStorage (preview format, timeline zoom, clipboard, last
+  // video), the same between launches. Taken by something else: a few neighbours, then any free port.
+  const { url } = await startServer({ port: [34170, 34171, 34172, 0] });
   win = new BrowserWindow({
     width: 1600, height: 1000, minWidth: 1100, minHeight: 700,
     show: false, backgroundColor: '#0b0d11', title: 'Motion Studio',
@@ -58,7 +60,7 @@ async function createWindow() {
     const result = await win.webContents.executeJavaScript(`new Promise(done => {
       let n = 0; const tick = () => {
         const f = document.querySelector('.pv.front'); const p = f && f.contentWindow && f.contentWindow.__player;
-        if (p || ++n > 100) done({ title: document.title, project: document.querySelector('#project-name').textContent, player: !!p, duration: p && p.duration, electron: document.body.classList.contains('electron') });
+        if (p || ++n > 100) done({ title: document.title, project: document.querySelector('#project-name').textContent, player: !!p, duration: p && p.duration, electron: document.body.classList.contains('electron'), url: location.origin, lang: document.documentElement.lang });
         else setTimeout(tick, 100);
       }; tick();
     })`);
