@@ -36,8 +36,13 @@ tablet, browser window or full screen) and animates everything around them:
   filled with your own clips so you start from a finished video instead of an empty timeline
 - **Headlines** that rise in word by word, with an accent color (`*like this*`)
 - **Callouts** with icons, counters and a live dot, dragged into place on the preview
+- **Transitions** between clips (crossfade, slide, whip, zoom, blur, flash, spin) and **keyframes** to move, scale,
+  rotate and fade a clip over time
+- **Talking-head edits**: keep a clip's sound, **cut the silences** out of it in one click, and **cut words**
+  out of the video by clicking them in the captions
 - **Zooms** onto a point you click, and **taps / clicks** that show where to look
-- **Captions** in four styles (pop, karaoke, block, classic), made from the voice-over or imported from `.srt`/`.vtt`
+- **Captions** in four styles (pop, karaoke, block, classic), made from the voice-over, from any audio track with
+  **speech recognition** (Whisper, on your own computer, every word at its exact moment) or imported from `.srt`/`.vtt`
 - **Voice-over** from text (Kokoro / Piper TTS), plus a **music bed** that fades, ducks under the voice and
   carves an EQ pocket for it, so speech stays clear while the music stays full
 - **Beat detection**: snap cuts and callouts to the music
@@ -108,10 +113,10 @@ Everything below is open for grabs. Comment on (or open) an issue so others know
 
 **Bigger features**
 - 🍎 **macOS and Linux builds**: the code is cross-platform, but packaging and testing aren't there yet
-- 🎙️ **Exact word timing** for captions with Whisper (`hyperframes transcribe`) instead of estimates
+- 🎙️ **Whisper on macOS and Linux**: Windows installs whisper.cpp by itself, elsewhere it has to be installed by hand
 - 🧪 **More tests**: the modules (`npm test`) and the timeline basics (`npm run test:ui`) are covered; rendering and
   most of the inspector aren't yet
-- 🎞️ **Transitions between clips**: crossfades, slides and whip pans on the device screen
+- 🎞️ **Keyframes on more than clips**: callouts, headlines and the device
 - 🖼️ **Templates**: save a video as a reusable starting point for the next one
 
 Found a bug? [Open an issue](https://github.com/tinygusie2/motion-studio/issues/new/choose). Have an idea?

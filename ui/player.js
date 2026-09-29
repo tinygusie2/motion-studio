@@ -58,6 +58,7 @@
       if (m.el.tagName !== 'AUDIO') m.el.style.visibility = active ? 'visible' : 'hidden';
       if (m.still) continue;
       if (!active) { if (!m.el.paused) m.el.pause(); continue; }
+      if (m.el.tagName === 'VIDEO' && m.el.dataset.hasAudio) m.el.volume = Math.max(0, Math.min(1, m.vol));
       if (m.el.tagName === 'AUDIO') {
         const v = Math.max(0, Math.min(1, m.vol * (m.lane?.length ? laneAt(m.lane, t - m.start) : 1)));
         if (m.graph) { m.el.volume = 1; m.graph.level.gain.value = v; for (const l of m.graph.lanes) l.set(laneAt(l.points, t - m.start)); }

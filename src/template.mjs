@@ -3,6 +3,7 @@
 // workspace, so the same template serves different apps.
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
+import { kfPlan } from './keyframes.mjs';
 
 export const W = 1080, H = 1920;
 
@@ -79,6 +80,8 @@ function headHtml(text, cls) {
   return `<h1 class="${cls}">${spans.join(' ')}</h1>`;
 }
 
+// A clip's own sound: silent unless the clip has `sound: true`; `vol` (0..1, default 1) is its level.
+const clipSound = c => c.sound ? ` data-has-audio="true"${c.vol != null && c.vol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +c.vol))}"` : ''}` : ' muted';
 const isImage = src => /\.(png|jpe?g|webp|gif)$/i.test(src);
 
 // How a clip sits in a screen of W×H. fit 'cover' fills it (top-aligned, overflow cut off), 'contain' shows all of
@@ -102,7 +105,11 @@ export const transitions = {
   fade: { label: 'Overvloeien', dur: 0.5 },
   slide: { label: 'Schuiven', dur: 0.45 },
   whip: { label: 'Zwiep', dur: 0.3 },
-  zoom: { label: 'Inzoomen', dur: 0.45 }
+  zoom: { label: 'Inzoomen', dur: 0.45 },
+  slideup: { label: 'Omhoog schuiven', dur: 0.45 },
+  blur: { label: 'Wazig overvloeien', dur: 0.5 },
+  flash: { label: 'Flits', dur: 0.35 },
+  spin: { label: 'Draaien', dur: 0.5 }
 };
 
 // Plans the transitions of one clip list. The cut stays where it is (the incoming clip's start); the clip before it
@@ -151,8 +158,14 @@ export function build(v, brand, fmt = '9:16') {
     const plan = plans[prefix], z = plan.trs.length ? plan.z[i] : 0, dur = +(c.dur + plan.hold[i]).toFixed(3);
     return isImage(c.src)
       ? `<img id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-track-index="${track + i}" alt="" />`
-      : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}" muted playsinline></video>`;
+      : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}"${clipSound(c)} playsinline></video>`;
   }).join('\n                ');
+  // Keyframes (c.kf) animate a clip after its transition into the screen is done; see src/keyframes.mjs.
+  const clipKfs = [['clip', v.clips], ['clip2-', L === 'dual' ? v.clips2 : []]].flatMap(([prefix, list]) => list.map((c, i) => {
+    const d = plans[prefix].trs.find(t => t.to === i)?.d || 0;
+    const plan = kfPlan(c.kf, +(c.start + d).toFixed(3), Math.max(0, c.dur - d));
+    return plan && { id: `${v.id}-${prefix}${i}`, ...plan };
+  })).filter(Boolean);
   const clipTrs = Object.entries(plans).flatMap(([prefix, p]) => p.trs.map(({ to, from, t, d, type }) => ({ to: `${v.id}-${prefix}${to}`, from: from >= 0 ? `${v.id}-${prefix}${from}` : null, t, d, type })));
   const chrome = L === 'browser' ? `<div class="chrome"><i></i><i></i><i></i><span class="addr"><span class="ms">lock</span>${esc(brand.url || '')}</span></div>` : '';
   const phone = (id, list, prefix, track, tag) => `<div id="${id}" class="phone L-${L}">
@@ -210,6 +223,7 @@ export function build(v, brand, fmt = '9:16') {
       const zooms = ${JSON.stringify(v.zooms)};
       const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t) })))};
       const clipTrs = ${JSON.stringify(clipTrs)};
+      const clipKfs = ${JSON.stringify(clipKfs)};
       const END = ${END};
       const caps = ${JSON.stringify(capGroups.map(g => ({ s: g.s, e: g.e, w: g.words.map(w => w.t), em: g.words.map(w => !!w.em) })))};
       const CAP = ${JSON.stringify({ style: cs.style, color: capColor, hi: capHi, ink: capInk, shadow: capShadow })};
@@ -238,7 +252,7 @@ export function build(v, brand, fmt = '9:16') {
       tl.fromTo('.phone-inner', { y: 0 }, { y: -18, duration: END - 1.8, ease: 'sine.inOut', stagger: 0.4 }, 1.8);
       // Clip transitions: the incoming clip (stacked on top) animates in while the clip it replaces, held on screen
       // for the overlap, animates out, so nothing of it shows through a fitted clip's background afterwards.
-      const SW = ${layouts[L].screen[0]};
+      const SW = ${layouts[L].screen[0]}, SH = ${layouts[L].screen[1]};
       clipTrs.forEach(c => {
         const to = document.getElementById(c.to), from = c.from && document.getElementById(c.from);
         const o = { duration: c.d, immediateRender: false };
@@ -248,6 +262,16 @@ export function build(v, brand, fmt = '9:16') {
         else if (c.type === 'slide') both([{ x: SW }, { x: 0 }], [{ x: 0 }, { x: -SW }], 'power3.inOut');
         else if (c.type === 'whip') both([{ x: SW, filter: 'blur(30px)' }, { x: 0, filter: 'blur(0px)' }], [{ x: 0, filter: 'blur(0px)' }, { x: -SW, filter: 'blur(30px)' }], 'expo.inOut');
         else if (c.type === 'zoom') both([{ opacity: 0, scale: 1.3 }, { opacity: 1, scale: 1 }], [{ opacity: 1, scale: 1 }, { opacity: 0, scale: 0.9 }], 'power3.out');
+        else if (c.type === 'slideup') both([{ y: SH }, { y: 0 }], [{ y: 0 }, { y: -SH }], 'power3.inOut');
+        else if (c.type === 'blur') both([{ opacity: 0, filter: 'blur(40px)' }, { opacity: 1, filter: 'blur(0px)' }], [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(40px)' }], 'power2.out', 'power2.in');
+        else if (c.type === 'flash') both([{ opacity: 0, filter: 'brightness(4)' }, { opacity: 1, filter: 'brightness(1)' }], [{ opacity: 1, filter: 'brightness(1)' }, { opacity: 0, filter: 'brightness(4)' }], 'power2.out', 'power2.in');
+        else if (c.type === 'spin') both([{ opacity: 0, rotation: -25, scale: 0.6 }, { opacity: 1, rotation: 0, scale: 1 }], [{ opacity: 1, rotation: 0, scale: 1 }, { opacity: 0, rotation: 25, scale: 1.3 }], 'power3.out', 'power2.in');
+      });
+      // Keyframes come after the transitions: they start once the transition is over, so they never fight over a property.
+      clipKfs.forEach(k => {
+        const node = document.getElementById(k.id);
+        tl.set(node, k.set, k.setAt);
+        k.segs.forEach(s => tl.fromTo(node, s.from, { ...s.to, duration: s.d, ease: s.ease, immediateRender: false }, s.t));
       });
 
       // Zooms. With a focus point (fx, fy in frame pixels) the device shifts so that point lands mid-screen,

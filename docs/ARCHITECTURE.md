@@ -37,6 +37,9 @@ http://localhost:3400. That's the quickest way to develop the UI.
 - `src/template.mjs`: the composition (HTML, CSS and the GSAP timeline), the layouts, the formats and clip placement.
 - `src/audio.mjs`: the music bed mix (fades, ducking under the voice) as a HyperFrames volume lane. It is shared
   with the UI at `/lib/audio.mjs`.
+- `src/keyframes.mjs`: clip keyframes (easings, interpolation, the GSAP plan). It is shared with the UI at `/lib/keyframes.mjs`.
+- `src/edit.mjs`, `src/silence.mjs`: cutting time out of a video, and finding silences. Shared with the UI at `/lib/edit.mjs` and `/lib/silence.mjs`.
+- `src/whisper.mjs`: finding, installing and running whisper.cpp for speech recognition.
 - `src/captions.mjs`: captions (word timing, grouping, splitting, SRT/VTT). It is shared with the UI at
   `/lib/captions.mjs`.
 - `ui/editor.js`: the editor (timeline, inspector, library, dialogs, keyboard).
@@ -61,13 +64,16 @@ or when the rows change shape.
 
 ## Projects (workspaces)
 
-Every project is a folder. Motion Studio can switch between them (Bestand → Projecten, Ctrl+O).
+Every project is a folder. Motion Studio can switch between them (Bestand → Projecten, Ctrl+O). In that dialog a
+project can be taken off the list (`POST /api/workspace/remove`, the folder stays) or, in the app, moved to the
+recycle bin (`trash: true`, through the `trash` function `main.mjs` passes to `startServer`; only folders with a
+`studio.json`, and the server refuses when it has no such function). The open project gives way to the next one on the list.
 
 | Path | What |
 | --- | --- |
 | `studio.json` | `{ name, defaultBrand }` |
 | `brands/<id>.json` | name, url, lang, `logo` (file in `assets/brand/`), `font` (file in `assets/fonts/`), `theme` colors, `chipColors`, `pills`, `endNameSize`, `renderPrefix`, `css`, `captions` (default caption style) |
-| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
+| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition, `kf` for its keyframes and `sound`/`vol` for its own sound), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
 | `assets/clips/` | screen recordings (converted to H.264 on upload) and screenshots (png/jpg); deleted files go to `.trash/` |
 | `assets/vo/` | audio (voice and music); generated voice-overs land here; deleted files go to `.trash/` |
 | `renders/` | finished MP4s (`<renderPrefix>-<id>[-4x5\|-1x1\|-16x9].mp4`), plus a `.srt` when the video has captions |
@@ -107,6 +113,25 @@ voice-over lines (automatically after the first voice-over, or via "Uit voice-ov
 or blocks added by hand.
 
 Word times inside a block are estimated from word length, so moving a block's in or out point re-times its words.
+A block made by speech recognition also has `wo`: each word's start in seconds after the block's start. Those exact
+times are used while the text still has as many words (fixing a typo keeps them, rewriting the sentence falls back
+to the estimate), they move with the block, and splitting a block splits them too (`timeWords`, `splitSub`).
+
+### Speech recognition
+
+*Captions → Uit audio* (or the Edit menu) runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on the
+video's voice/audio track (`POST /api/transcribe/<id>`, a job like render and voice-over). `src/whisper.mjs` finds
+`whisper-cli` and a model (Settings `whisperCli` / `whisperModelFile` / `whisperModel`, then
+`~/.motion-studio/whisper/`, then PATH). When they are missing the editor asks first and then runs
+`POST /api/whisper/install`: a pinned whisper.cpp release (Windows x64 only; elsewhere install it yourself) and a
+ggml model from Hugging Face, checked against the sha256 Hugging Face publishes. Nothing is downloaded before the
+user agrees, and the audio never leaves the computer.
+
+The server converts the audio to 16 kHz mono with ffmpeg, runs `whisper-cli … -ml 1 -sow -oj` (one word per entry)
+with automatic language detection, and caches the JSON per file version, model and language in `vo/whisper/`.
+`wordsFromWhisper()` and `subsFromWords()` in `src/captions.mjs` turn that into caption blocks (new block after a
+pause, after a sentence end, or when it gets long). The job returns the blocks; the editor puts them in the spec
+with `commit`, so undo works.
 
 The style comes from `captionDefaults` < `brand.captions` < `video.captions`. It covers:
 - `style` (`pop`, `karaoke`, `box`, `plain`)
@@ -157,12 +182,49 @@ enlarged. The ideal source size is twice the screen size.
 
 ## Clip transitions
 
-By default one clip cuts hard to the next. A clip's `tr` (`fade`, `slide`, `whip` or `zoom`, see `transitions` in
+By default one clip cuts hard to the next. A clip's `tr` (`fade`, `slide`, `slideup`, `whip`, `zoom`, `blur`, `flash` or `spin`, see `transitions` in
 `src/template.mjs`) and optional `trDur` (seconds) set how it comes in. The cut stays at the incoming clip's `start`:
 the clip that was showing there (or ended at most 0.1 s before) is held on screen `trDur` seconds longer, by
 extending its `data-duration`, and both animate on the GSAP timeline while they overlap. Clips then stack by their
 start, so the incoming one is on top. Without a clip before it, the clip only animates in over the screen
 background. `clipTransitions()` plans this per device.
+
+## Clip sound and cutting
+
+Uploaded videos keep their sound (AAC). A clip plays it when it has `sound: true` (`vol`, 0..1, is its level): the
+`<video>` then gets `data-has-audio` and no `muted`, and HyperFrames mixes it into the render. Without `sound` a clip
+is silent, as before. `GET /api/state` has `clipAudio` (which clips have a sound track, by ffprobe), and the media
+pool marks them with a speaker.
+
+`src/edit.mjs` cuts time out of the whole video (`cutRanges(v, [[t0, t1], …])`): clips are cut and closed up (a later
+piece of a clip gets its own `media` offset and loses its transition and keyframes), every timed item moves (a moment
+inside a cut lands on its start), caption blocks with exact word times lose exactly the words inside a cut, and `end`
+and `dur` get shorter. The voice/audio track is a file and is not cut. Two things use it:
+- **Cut silence** (clip inspector): `GET /api/silences/<clip>?level=` runs ffmpeg `silencedetect` (cached in
+  `vo/silence/`), `silenceCuts()` in `src/silence.mjs` turns the silences into ranges (only silences over 0.4 s,
+  with 0.12 s of air kept around the words) and the editor cuts them after a confirmation.
+- **Cut words** (caption inspector, for blocks with `wo`): `wordRanges()` gives a word's time range, from its start to
+  the start of the next word.
+
+Both go through `commit`, so Ctrl+Z brings the video back.
+
+Captions can also come from the sound of the clips: without a voice/audio track, `POST /api/transcribe/<id>` mixes
+the sound of the clips that have `sound: true` into one wav in video time. Before recognition, long silences
+(0.6 s and more, `speechSegments()`) are taken out of the audio, because Whisper stretches the first word after a
+silence over it; the word times are mapped back afterwards (`mapFromSegments()`).
+
+## Clip keyframes
+
+`kf: [{ t, x, y, s, r, o, ease }]` on a clip moves it inside its screen: `x`/`y` shift in screen pixels, `s` scales,
+`r` rotates (degrees) and `o` is the opacity. `t` counts seconds from the clip's start, or from the end of its
+transition when it has one, so a keyframe never fights the transition over the same property. `ease` is how the clip
+gets *to* that keyframe (`kfEases` in `src/keyframes.mjs`; the names are GSAP's). Before the first keyframe the first
+one holds, after the last one the last one holds. Splitting a clip (S) gives both halves a keyframe at the cut.
+
+`kfPlan()` turns the list into a `set` plus one tween per pair; `build()` writes those as `clipKfs` and the script
+plays them after the transitions. `kfAt()` gives the values at a time, which the editor uses for "Keyframe op de
+playhead". Both live in `src/keyframes.mjs`, which is shared with the UI at `/lib/keyframes.mjs`. In the editor
+they show as diamonds on the clip in the timeline and as rows in the clip's inspector.
 
 ## Formats
 

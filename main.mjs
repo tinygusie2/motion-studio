@@ -41,7 +41,7 @@ function buildMenu() {
 async function createWindow() {
   // A fixed port keeps the page's origin, and with it localStorage (preview format, timeline zoom, clipboard, last
   // video), the same between launches. Taken by something else: a few neighbours, then any free port.
-  const { url } = await startServer({ port: [34170, 34171, 34172, 0] });
+  const { url } = await startServer({ port: [34170, 34171, 34172, 0], trash: p => shell.trashItem(p) });
   win = new BrowserWindow({
     width: 1600, height: 1000, minWidth: 1100, minHeight: 700,
     show: false, backgroundColor: '#0b0d11', title: 'Motion Studio',

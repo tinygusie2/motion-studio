@@ -43,3 +43,34 @@ test('captionStyle: defaults < brand < video', () => {
   const cs = captionStyle({ captions: { style: 'box', size: 60 } }, { captions: { size: 80 } });
   assert.equal(cs.style, 'box'); assert.equal(cs.size, 80); assert.equal(cs.words, captionDefaults.words);
 });
+
+test('exact word times (wo) are used while the word count matches, and survive a split', async () => {
+  const { timeWords, splitSub, wordsFromWhisper, subsFromWords, captionGroups } = await import('../src/captions.mjs');
+  const sub = { t: 2, out: 4, text: 'een twee drie vier', wo: [0, 0.1, 1.5, 1.8] };
+  assert.deepEqual(timeWords(sub).map(w => w.t), [2, 2.1, 3.5, 3.8]);
+  assert.deepEqual(timeWords({ ...sub, text: 'een twee drie' }).map(w => w.t).length, 3);
+  assert.notDeepEqual(timeWords({ ...sub, text: 'een twee drie' }).map(w => w.t), [2, 2.1, 3.5]); // count changed: estimated again
+  assert.deepEqual(timeWords({ ...sub, t: 5, out: 7 }).map(w => w.t), [5, 5.1, 6.5, 6.8]); // moves with the block
+  const [a, b] = splitSub(sub, 3.3);
+  assert.deepEqual([a.text, b.text], ['een twee', 'drie vier']);
+  assert.deepEqual(a.wo, [0, 0.1]);
+  assert.deepEqual(timeWords(b).map(w => w.t), [3.5, 3.8]);
+  assert.equal(captionGroups([sub], 2)[1].s, 3.5);
+});
+
+test('whisper words: glued pieces, dropped sound tags, blocks split on pauses and sentences', async () => {
+  const { wordsFromWhisper, subsFromWords } = await import('../src/captions.mjs');
+  const seg = (text, from, to) => ({ text, offsets: { from, to } });
+  const words = wordsFromWhisper({ transcription: [seg(' [MUSIC]', 0, 500), seg(' Hallo', 1000, 1400), seg(',', 1400, 1450), seg(' dit', 1500, 1700), seg(' is', 1700, 1800), seg(' een', 1800, 1900), seg(' test.', 1900, 2300), seg(' Nu', 4000, 4200), seg(' klaar', 4200, 4600), seg(' (laughs)', 4600, 4700)] });
+  assert.deepEqual(words.map(w => w.w), ['Hallo,', 'dit', 'is', 'een', 'test.', 'Nu', 'klaar']);
+  assert.equal(words[0].e, 1.45);
+  const subs = subsFromWords(words);
+  assert.deepEqual(subs.map(s => s.text), ['Hallo, dit is een test.', 'Nu klaar']);
+  assert.deepEqual(subs[0].wo, [0, 0.5, 0.7, 0.8, 0.9]);
+  assert.equal(subs[0].t, 1);
+  assert.ok(subs[0].out > 2.3 && subs[0].out <= 4);
+  assert.equal(subsFromWords([]).length, 0);
+  // Long runs are cut at maxWords.
+  const run = Array.from({ length: 20 }, (_, i) => ({ w: 'w' + i, t: i * 0.3, e: i * 0.3 + 0.25 }));
+  assert.ok(subsFromWords(run).every(s => s.text.split(' ').length <= 9));
+});

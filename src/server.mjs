@@ -2,14 +2,16 @@
 // Used in-process by the Electron app (main.mjs), or standalone for development:
 //   node src/server.mjs [--port 3400] [--workspace <dir>]
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { layouts, formats, transitions, normalize, defaultTheme, defaultChipColors } from './template.mjs';
-import { toSrt } from './captions.mjs';
+import { toSrt, wordsFromWhisper, subsFromWords } from './captions.mjs';
+import { parseSilences, silenceLevels, speechSegments, mapFromSegments } from './silence.mjs';
+import { whisperStatus, installWhisper, whisperJson, cacheKey, whisperModels, defaultWhisperModel } from './whisper.mjs';
 import { APP_ROOT, GSAP_FILE, Workspace, createWorkspace, isWorkspace, loadSettings, saveSettings, validId } from './workspace.mjs';
 
 const UI = join(APP_ROOT, 'ui');
@@ -74,7 +76,9 @@ function tools(settings) {
   return { python, piperVoices, hf: settings.hyperframes || 'hyperframes@0.8.73' };
 }
 
-export async function startServer({ port = 3400, host = '127.0.0.1', workspace } = {}) {
+// `trash(path)` moves a folder to the recycle bin (the Electron app passes shell.trashItem); without it projects can
+// only be taken off the list.
+export async function startServer({ port = 3400, host = '127.0.0.1', workspace, trash } = {}) {
   let settings = loadSettings();
   let ws = null;
   const jobs = new Map();
@@ -87,6 +91,19 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
     saveSettings(settings);
     jobs.clear();
     return ws;
+  }
+  // Takes a project off the list of recent projects (its folder stays). When it was the open one, the next recent
+  // project opens, or none.
+  function forgetWorkspace(dir) {
+    dir = resolve(dir);
+    const wasOpen = ws && resolve(ws.root) === dir;
+    settings.recents = settings.recents.map(r => resolve(r)).filter(r => r !== dir && isWorkspace(r));
+    if (wasOpen) {
+      const next = settings.recents.find(isWorkspace);
+      if (next) return openWorkspace(next);
+      ws = null; settings.workspace = null; jobs.clear();
+    }
+    saveSettings(settings);
   }
   const initial = [workspace, settings.workspace, join(homedir(), 'Documents', 'RepFlow-promo', 'videos')].find(isWorkspace);
   if (initial) openWorkspace(initial);
@@ -175,6 +192,88 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
       if (toDownloads) copyFileSync(join(w.p.renders, srtName), join(downloads, srtName));
     }
     return { file: files[0], files, outputs, srt: srt ? srtName : null, dur: v.dur ?? 15 };
+  }
+  // Whether a clip file has a sound track (ffprobe), remembered per file version. Clips uploaded before sound was kept
+  // have none.
+  const audioMemo = new Map();
+  function hasAudio(name) {
+    const file = join(ws.p.clips, basename(name));
+    if (!existsSync(file) || IMAGE_EXT.includes(extname(file).toLowerCase())) return false;
+    const st = statSync(file), key = `${file}|${st.size}|${st.mtimeMs}`;
+    if (!audioMemo.has(key)) {
+      const r = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file], { encoding: 'utf8', windowsHide: true });
+      audioMemo.set(key, /audio/.test(r.stdout || ''));
+    }
+    return audioMemo.get(key);
+  }
+  // Silent stretches of a clip's sound, in source seconds (ffmpeg silencedetect), cached per file version and level.
+  async function silencesOf(name, level) {
+    const file = join(ws.p.clips, basename(name));
+    if (!hasAudio(name)) throw new Error('Deze clip heeft geen geluid.');
+    const db = (silenceLevels[level] || silenceLevels.normal).db, st = statSync(file);
+    const dir = join(ws.p.voCache, 'silence'), cache = join(dir, `${basename(name)}.${st.size}-${Math.round(st.mtimeMs)}.${db}.json`);
+    if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8'));
+    const out = await run('ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-vn', '-af', `silencedetect=noise=${db}dB:d=0.25`, '-f', 'null', '-']);
+    const total = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(out);
+    const dur = total ? +total[1] * 3600 + +total[2] * 60 + +total[3] : Infinity;
+    const result = { dur: Number.isFinite(dur) ? +dur.toFixed(3) : null, silences: parseSilences(out, dur) };
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(cache, JSON.stringify(result));
+    return result;
+  }
+  // The sound of the clips that have `sound: true`, laid out in video time as one 16 kHz wav (for when a video has no
+  // voice/audio track, like a talking-head recording). Returns a short hash of what went in, for the cache.
+  async function clipSoundWav(v, out, log, job) {
+    const list = [...(v.clips || []), ...(v.layout === 'dual' ? v.clips2 || [] : [])].filter(c => c.sound && hasAudio(c.src));
+    const tempo = r => { const f = []; while (r > 2) { f.push('atempo=2'); r /= 2; } while (r < 0.5) { f.push('atempo=0.5'); r /= 0.5; } f.push(`atempo=${+r.toFixed(4)}`); return f.join(','); };
+    const chains = list.map((c, i) => { const rate = c.rate || 1, m = c.media || 0; return `[${i}:a]atrim=start=${m}:end=${m + c.dur * rate},asetpts=PTS-STARTPTS${rate !== 1 ? ',' + tempo(rate) : ''},aresample=16000,adelay=${Math.round(c.start * 1000)}:all=1[a${i}]`; }).join(';');
+    const graph = `${chains};${list.map((_, i) => `[a${i}]`).join('')}amix=inputs=${list.length}:normalize=0:dropout_transition=0[o]`;
+    await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...list.flatMap(c => ['-i', join(ws.p.clips, basename(c.src))]), '-filter_complex', graph, '-map', '[o]', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out], {}, log, job?.track);
+    return createHash('sha1').update(graph + list.map(c => statSync(join(ws.p.clips, basename(c.src))).mtimeMs).join()).digest('hex').slice(0, 10);
+  }
+  // Captions from speech: whisper.cpp reads the video's voice/audio track (assets/vo) and gives every word its time.
+  // The result is cached per file version, model and language. The editor puts the blocks in the spec (so undo works).
+  async function transcribe(id, log, job) {
+    const w = ws, v = w.readSpec(id), st = whisperStatus(settings);
+    const fromClips = !v.audio;
+    if (fromClips && ![...(v.clips || []), ...(v.clips2 || [])].some(c => c.sound && hasAudio(c.src))) throw new Error('Deze video heeft geen stem- of audiospoor, en geen clip met geluid, om af te luisteren.');
+    if (!st.cli || !st.model) throw Object.assign(new Error('Whisper is nog niet geïnstalleerd.'), { code: 'whisper_missing' });
+    const file = fromClips ? null : join(w.p.vo, basename(v.audio));
+    if (file && !existsSync(file)) throw new Error(`Audiobestand niet gevonden: ${v.audio}`);
+    // Whisper detects the language itself: the brand's language says what the video's texts are in, not what is spoken.
+    const lang = 'auto';
+    const dir = join(w.p.voCache, 'whisper');
+    const tmp = join(tmpdir(), `ms-whisper-${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    let json, segs = null;
+    try {
+      let wav = join(tmp, 'in.wav'), key;
+      if (fromClips) { log('Geluid van de clips samenvoegen…'); key = `clips-${id}-${await clipSoundWav(v, wav, log, job)}`; }
+      else key = `${basename(v.audio)}.${cacheKey(file, basename(st.model), lang)}`;
+      const cache = join(dir, `${key}.${basename(st.model)}.v2.json`);
+      if (existsSync(cache)) { log('Uit cache.'); ({ json, segs } = JSON.parse(readFileSync(cache, 'utf8'))); }
+      else {
+        if (!fromClips) { log('Audio omzetten (16 kHz)…'); await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', file, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], {}, log, job?.track); }
+        // Long silences go first: recognition stretches the first word after one over it. Times are mapped back below.
+        const total = wavSeconds(wav);
+        const quiet = await run('ffmpeg', ['-hide_banner', '-nostats', '-i', wav, '-af', 'silencedetect=noise=-35dB:d=0.6', '-f', 'null', '-'], {}, null, job?.track);
+        const keep = speechSegments(parseSilences(quiet, total), total);
+        if (!keep.length) throw new Error('Er is geen spraak herkend in dit audiobestand.');
+        if (keep.length > 1 || keep[0][0] > 0.01 || keep[0][1] < total - 0.01) {
+          const trimmed = join(tmp, 'speech.wav');
+          await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', wav, '-af', `aselect='${keep.map(([a, b]) => `between(t,${a},${b})`).join('+')}',asetpts=N/SR/TB`, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', trimmed], {}, log, job?.track);
+          wav = trimmed; segs = keep;
+          log(`${(total - keep.reduce((n, [a, b]) => n + b - a, 0)).toFixed(1)}s stilte overgeslagen.`);
+        }
+        log('Woorden herkennen…');
+        json = await whisperJson({ cli: st.cli, model: st.model, wav, lang, outBase: join(tmp, 'out'), run, onLine: log, onSpawn: job?.track });
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(cache, JSON.stringify({ json, segs }));
+      }
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+    const words = wordsFromWhisper(json).map(w => (segs ? { ...w, t: mapFromSegments(segs, w.t), e: Math.max(mapFromSegments(segs, w.t) + 0.05, mapFromSegments(segs, w.e)) } : w));
+    if (!words.length) throw new Error('Er is geen spraak herkend in dit audiobestand.');
+    return { subs: subsFromWords(words), words: words.length, lang: json.result?.language || lang };
   }
   // Beats of a music file (source time), detected once by `hyperframes beats` in a scratch project and cached
   // next to the TTS cache, keyed by size + mtime so a replaced file is analysed again.
@@ -302,7 +401,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-ar', '48000', '-ac', '2', join(ws.p.vo, `${base}.wav`)]);
         return { kind: 'audio', name: `${base}.wav` };
       }
-      await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'veryfast', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-movflags', '+faststart', join(ws.p.clips, `${base}.mp4`)]);
+      await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'veryfast', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', join(ws.p.clips, `${base}.mp4`)]);
       return { kind: 'clip', name: `${base}.mp4` };
     } finally { rmSync(tmp, { force: true }); }
   }
@@ -313,13 +412,15 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
 
   function state() {
     const t = tools(settings);
-    const base = { settings: { ...settings, detected: t }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, transitions, defaultTheme, defaultChipColors };
+    const base = { canTrash: !!trash, settings: { ...settings, detected: t }, whisper: { ...whisperStatus(settings), models: whisperModels }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, transitions, defaultTheme, defaultChipColors };
     if (!ws) return { ...base, workspace: null };
     return {
       ...base,
       workspace: { path: ws.root, ...ws.config },
       videos: ws.specs().map(v => ({ id: v.id, overline: v.overline, brand: v.brand || null, dur: v.dur ?? 15, formats: ws.formatsOf(v) })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })),
       clips: ws.files(ws.p.clips, ['.mp4', '.webm', ...IMAGE_EXT]),
+      clipAudio: Object.fromEntries(ws.files(ws.p.clips, ['.mp4', '.webm']).map(f => [f, hasAudio(f)])),
+      silenceLevels,
       audio: ws.files(ws.p.vo, ['.wav', '.mp3']),
       fonts: ws.files(ws.p.fonts, ['.woff2', '.woff', '.ttf', '.otf']).filter(f => !f.startsWith('material-symbols')),
       logos: ws.files(ws.p.brandAssets, ['.svg', '.png', '.jpg', '.jpeg', '.webp']),
@@ -342,7 +443,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
       }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
-      if ((m = /^\/lib\/(captions|audio|starters)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
+      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 
       if (p === '/api/state' && method === 'GET') return send(res, 200, state());
       if (p === '/api/settings' && method === 'PUT') { settings = saveSettings({ ...settings, ...(await readJsonBody(req)) }); return send(res, 200, state()); }
@@ -350,6 +451,19 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         const { path } = await readJsonBody(req);
         if (!isWorkspace(path)) return send(res, 400, { error: 'Deze map is geen Motion Studio-project (studio.json ontbreekt). Kies "Nieuw project" om er een te maken.' });
         openWorkspace(path); return send(res, 200, state());
+      }
+      if (p === '/api/workspace/remove' && method === 'POST') {
+        const { path, trash: toTrash } = await readJsonBody(req);
+        const dir = resolve(String(path || ''));
+        if (!settings.recents.some(r => resolve(r) === dir)) return send(res, 400, { error: 'Dit project staat niet in de lijst.' });
+        if (toTrash) {
+          if (!trash) return send(res, 400, { error: 'Naar de prullenbak kan alleen in de app. Haal het project uit de lijst en verwijder de map zelf.' });
+          // Only a real project folder, never the home folder or a drive: studio.json must be in it.
+          if (!isWorkspace(dir) || dir === resolve(homedir()) || dir.split(/[\\/]/).filter(Boolean).length < 2) return send(res, 400, { error: 'Deze map wordt niet verwijderd: het is geen los projectmap.' });
+          try { await trash(dir); } catch (e) { return send(res, 500, { error: `Kon de map niet naar de prullenbak verplaatsen: ${e.message}` }); }
+        }
+        forgetWorkspace(dir);
+        return send(res, 200, state());
       }
       if (p === '/api/workspace/create' && method === 'POST') {
         const { path, name } = await readJsonBody(req);
@@ -448,6 +562,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
 
       if (p === '/api/upload' && method === 'POST') return send(res, 200, await importMedia(url.searchParams.get('name') || 'file.mp4', await readBody(req), url.searchParams.get('kind')));
 
+      if ((m = /^\/api\/silences\/([^/]+)$/.exec(p))) return send(res, 200, await silencesOf(decodeURIComponent(m[1]), url.searchParams.get('level')));
       if ((m = /^\/api\/beats\/([^/]+)$/.exec(p))) return send(res, 200, await beatsOf(m[1]));
       if (p === '/api/batch/all') {
         if (method === 'POST') {
@@ -458,11 +573,19 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace }
         if (method === 'DELETE') jobs.get('batch:all')?.cancel();
         return send(res, 200, jobs.get('batch:all') || { state: 'idle' });
       }
-      if ((m = /^\/api\/(render|vo)\/([a-z0-9-]+)$/.exec(p))) {
+      if (p === '/api/whisper/install') {
+        if (method === 'POST') {
+          const model = (await readJsonBody(req)).model;
+          return send(res, 200, startJob('whisper', 'install', log => installWhisper(settings, whisperModels[model] ? model : defaultWhisperModel, log)));
+        }
+        if (method === 'DELETE') jobs.get('whisper:install')?.cancel();
+        return send(res, 200, jobs.get('whisper:install') || { state: 'idle' });
+      }
+      if ((m = /^\/api\/(render|vo|transcribe)\/([a-z0-9-]+)$/.exec(p))) {
         const [, kind, id] = m;
         if (method === 'POST') {
           if (!ws.hasSpec(id)) return send(res, 404, { error: 'not found' });
-          return send(res, 200, startJob(kind, id, kind === 'render' ? (log, job) => renderVideo(id, log, job) : log => voiceOver(id, log)));
+          return send(res, 200, startJob(kind, id, kind === 'render' ? (log, job) => renderVideo(id, log, job) : kind === 'transcribe' ? (log, job) => transcribe(id, log, job) : log => voiceOver(id, log)));
         }
         if (method === 'DELETE') jobs.get(`${kind}:${id}`)?.cancel();
         return send(res, 200, jobs.get(`${kind}:${id}`) || { state: 'idle' });

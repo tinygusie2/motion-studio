@@ -186,6 +186,18 @@
     <div class="dlg-actions"><button id="set-cancel" class="ghost">Annuleren</button><button id="set-save" class="primary">Opslaan</button></div>
   </dialog>
 
+  <dialog id="dlg-whisper">
+    <form method="dialog">
+      <h2>Spraakherkenning installeren</h2>
+      <p class="hint">Voor ondertitels uit audio gebruikt Motion Studio Whisper. Dat draait op je eigen computer: je audio gaat nergens heen. Eenmalig downloaden: het programma (whisper.cpp, 8 MB, van GitHub) en een taalmodel (van Hugging Face). Ze worden bewaard in je gebruikersmap.</p>
+      <div id="whisper-models"></div>
+      <div class="dlg-actions">
+        <button value="cancel" formnovalidate class="ghost">Annuleren</button>
+        <button value="ok" class="primary"><span class="ms">download</span>Downloaden</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dlg-keys">
     <h2>Sneltoetsen</h2>
     <div id="keys-list"></div>

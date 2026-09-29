@@ -54,8 +54,8 @@ let page;
 const W = 1400, PPS = 100;
 
 // A fresh editor on a fresh copy of the video, at a known timeline zoom.
-async function open(t) {
-  await fetch(`${url}/api/videos/ui-test`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...spec, id: 'ui-test' }) });
+async function open(t, patch = {}) {
+  await fetch(`${url}/api/videos/ui-test`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...spec, ...patch, id: 'ui-test' }) });
   const ctx = await browser.newContext({ viewport: { width: W, height: 900 }, locale: 'nl-NL' });
   await ctx.addInitScript(pps => { localStorage.setItem('ms-pps', String(pps)); }, PPS);
   page = await ctx.newPage();
@@ -212,4 +212,110 @@ uiTest('moving a voice-over line takes its captions (also split ones) along, and
   await page.keyboard.press('.'); // nudging moves them together too
   await saved();
   assert.deepEqual((await onDisk()).subs.map(s => s.t), [2.03, 2.53, 5]);
+});
+
+uiTest('keyframes: added at the playhead, shown as diamonds, kept on both sides of a split', async t => {
+  await open(t);
+  const ruler = await page.locator('#tl-ruler').boundingBox();
+  await clip(1).click(); // clip 1 runs from 3 s to 6 s
+  await page.mouse.click(ruler.x + 4 * PPS, ruler.y + 10);
+  await page.getByRole('button', { name: /Keyframe op de playhead|Keyframe at the playhead/ }).click();
+  await page.mouse.click(ruler.x + 5 * PPS, ruler.y + 10);
+  await page.getByRole('button', { name: /Keyframe op de playhead|Keyframe at the playhead/ }).click();
+  assert.equal(await clip(1).locator('.kf-dia').count(), 2);
+  // Change the second keyframe's scale in the inspector.
+  await page.locator('.kf-row').nth(1).locator('label.field', { hasText: /Schaal|Scale/ }).locator('input').fill('1.5');
+  await saved();
+  const kf = (await onDisk()).clips[1].kf;
+  assert.deepEqual(kf.map(k => k.t), [1, 2]);
+  assert.equal(kf[1].s, 1.5);
+  // Split at 4.5 s: each half keeps a keyframe at the cut, so the motion carries on.
+  await page.mouse.click(ruler.x + 4.5 * PPS, ruler.y + 10);
+  await page.evaluate(() => document.activeElement.blur()); // 's' would be typed into the field
+  await page.keyboard.press('s');
+  await page.locator('.tl-item.k-clips').nth(3).waitFor();
+  await saved();
+  const { clips } = await onDisk();
+  assert.deepEqual(clips[1].kf.map(k => k.t), [1, 1.5]);
+  assert.equal(clips[2].kf[0].t, 0);
+  assert.equal(clips[2].kf[1].t, 0.5);
+  assert.equal(clips[2].kf[1].s, 1.5);
+});
+
+uiTest('captions from audio: without Whisper the install dialog asks first, and cancelling downloads nothing', async t => {
+  await open(t, { audio: 'talk.wav' });
+  await page.getByRole('button', { name: /Uit audio|From audio/ }).click();
+  const dlg = page.locator('#dlg-whisper');
+  await dlg.waitFor();
+  assert.equal(await dlg.locator('input[type=radio]').count(), 2);
+  assert.equal(await dlg.locator('input[type=radio]:checked').getAttribute('value'), 'small');
+  await dlg.getByRole('button', { name: /Annuleren|Cancel/ }).click();
+  assert.equal(await dlg.evaluate(d => d.open), false);
+  assert.equal(await page.locator('#dlg-job').evaluate(d => d.open), false, 'no job was started');
+  // Without an audio track the button is disabled.
+  await open(t);
+  assert.equal(await page.getByRole('button', { name: /Uit audio|From audio/ }).isDisabled(), true);
+});
+
+// A 6 s clip with a tone for 2 s, silence for 2 s and a tone again (needs ffmpeg; the tests below are skipped without).
+const { spawnSync } = await import('node:child_process');
+const hasFfmpeg = !spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=90x160:rate=15:duration=6',
+  '-f', 'lavfi', '-i', 'aevalsrc=if(between(t\\,2\\,4)\\,0\\,0.5*sin(2*PI*440*t)):s=44100:d=6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', join(ws, 'assets', 'clips', 'talk.mp4')], { windowsHide: true }).status;
+const soundTest = (name, fn) => test(name, { skip: browser && hasFfmpeg ? false : 'needs Chrome or Edge and ffmpeg' }, fn);
+const talk = { clips: [{ src: 'talk.mp4', start: 0.5, dur: 6, media: 0 }], dur: 10, end: 8 };
+
+soundTest('cut silence: a clip with sound loses its silent stretch and everything after it moves up', async t => {
+  await open(t, { ...talk, heads: [{ t: 5, text: 'Later' }] });
+  page.on('dialog', d => d.accept());
+  await clip(0).click();
+  await page.getByLabel(/Geluid van de clip|Sound of the clip/).check();
+  await page.getByRole('button', { name: /Stilte knippen|Cut silence/ }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.tl-item.k-clips').length === 2);
+  await saved();
+  const v = await onDisk();
+  assert.equal(v.clips.length, 2);
+  assert.equal(v.clips[0].sound, true);
+  const cut = v.clips[1].media - v.clips[0].dur; // source seconds thrown away
+  assert.ok(cut > 1.5 && cut < 2.1, `cut ${cut}s`);
+  assert.equal(v.clips[1].start, +(v.clips[0].start + v.clips[0].dur).toFixed(3), 'closed up');
+  assert.ok(Math.abs(v.dur - (10 - cut)) < 0.02, 'the video got shorter by what was cut');
+  assert.ok(Math.abs(v.heads[0].t - (5 - cut)) < 0.02, 'later items moved up');
+  await page.keyboard.press('Control+z');
+  await page.waitForFunction(() => document.querySelectorAll('.tl-item.k-clips').length === 1);
+});
+
+soundTest('cut words: picked words leave the video, the caption keeps the rest', async t => {
+  await open(t, { ...talk, subs: [{ t: 1, out: 5, text: 'een twee drie vier', wo: [0, 1, 2, 3] }] });
+  page.on('dialog', d => d.accept());
+  await page.locator('.tl-item.k-sub').click();
+  await page.locator('.words .word', { hasText: 'twee' }).click();
+  await page.getByRole('button', { name: /Knip uit video|Cut from video/ }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.tl-item.k-clips').length === 2);
+  await saved();
+  const v = await onDisk();
+  assert.equal(v.subs[0].text, 'een drie vier');
+  assert.deepEqual(v.subs[0].wo, [0, 1, 2]);
+  assert.equal(v.clips.length, 2);
+  assert.equal(v.clips[0].dur, 1.5); // the clip runs from 0.5 s to the word at 1 + 1 = 2 s
+  assert.equal(v.dur, 9);
+});
+
+uiTest('projects dialog: a project can be taken off the list, its folder stays', async t => {
+  const other = join(home, 'other-project');
+  createWorkspace(other, 'Other');
+  const post = (path, body) => fetch(`${url}/api/workspace/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  await post('open', { path: other }); await post('open', { path: ws }); // recents: ws, other
+  await open(t);
+  page.on('dialog', d => d.accept());
+  await page.locator('#btn-project').click();
+  const rows = page.locator('#recent-list .recent-row');
+  await rows.first().waitFor();
+  const before = await rows.count();
+  assert.ok(before >= 2);
+  // No recycle bin outside the app: only the "off the list" button.
+  assert.equal(await rows.first().locator('button.icon').count(), 1);
+  await rows.filter({ hasText: 'other-project' }).locator('button.icon').click();
+  await page.waitForFunction(n => document.querySelectorAll('#recent-list .recent-row').length === n - 1, before);
+  assert.equal(await rows.filter({ hasText: 'other-project' }).count(), 0);
+  assert.ok((await (await fetch(`${url}/api/state`)).json()).workspace.path === ws, 'the open project stays open');
 });

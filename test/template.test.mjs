@@ -69,7 +69,7 @@ test('clipTransitions: the clip before a transition is held for the overlap, the
   assert.deepEqual(trs, [{ to: 0, from: 1, t: 3, d: transitions.slide.dur, type: 'slide' }, { to: 2, from: 3, t: 6, d: 0.3, type: 'fade' }]);
   // After a gap there is nothing to hand over from: the clip only animates in. Unknown types are a hard cut.
   assert.deepEqual(clipTransitions([{ start: 0, dur: 1 }, { start: 2, dur: 1, tr: 'whip' }]).trs[0].from, -1);
-  assert.equal(clipTransitions([{ start: 0, dur: 1 }, { start: 1, dur: 1, tr: 'spin' }]).trs.length, 0);
+  assert.equal(clipTransitions([{ start: 0, dur: 1 }, { start: 1, dur: 1, tr: 'nope' }]).trs.length, 0);
 });
 
 test('build: transitions extend the outgoing clip and animate both', () => {
@@ -83,4 +83,19 @@ test('build: transitions extend the outgoing clip and animate both', () => {
   // The second phone's clips only count in the dual layout.
   assert.match(build(video({ clips2: clips }), brand), /const clipTrs = \[\];/);
   assert.match(build(video({ layout: 'dual', clips2: clips }), brand), /"to":"demo-clip2-1","from":"demo-clip2-0"/);
+});
+
+test('build: keyframes animate a clip after its transition, and every transition type builds', () => {
+  const kf = [{ t: 0, s: 1 }, { t: 1, s: 1.4, x: 40, ease: 'power3.out' }];
+  const html = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 3, kf }] }), brand);
+  assert.match(html, /const clipKfs = \[\{"id":"demo-clip0","set":\{[^}]*\},"setAt":0.5,"segs":\[\{"t":0.5,"d":1,/);
+  // With a transition the keyframes start once it is over.
+  const withTr = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr: 'fade', kf }] }), brand);
+  assert.match(withTr, /"id":"demo-clip1","set":\{[^}]*\},"setAt":2,/);
+  assert.match(build(video(), brand), /const clipKfs = \[\];/);
+  for (const tr of Object.keys(transitions)) {
+    const h = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr }] }), brand);
+    assert.match(h, new RegExp(`"type":"${tr}"`));
+    assert.match(h, new RegExp(`c.type === '${tr}'`));
+  }
 });
