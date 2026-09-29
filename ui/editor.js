@@ -34,7 +34,7 @@ const S = {
   spec: null, id: null, sel: null, t: 0, pps: 70,
   pf: (() => { try { return localStorage.getItem('ms-pf') || '9:16'; } catch { return '9:16'; } })(), // preview format
   history: [], future: [], lastKey: null, lastKeyAt: 0,
-  clipDur: {}, clipSize: {}, thumbs: {}, media: {}, audioDur: {}, beats: {}, histories: {}, multi: null, pv: 0, player: null, playing: false
+  clipDur: {}, clipSize: {}, thumbs: {}, media: {}, audioDur: {}, peaks: {}, beats: {}, histories: {}, multi: null, pv: 0, player: null, playing: false
 };
 
 // ---------- api ----------
@@ -238,10 +238,11 @@ function onTime() {
   $('#timecode').textContent = `${fmt(S.t)} / ${fmt(DUR())}`;
   $('#btn-play').firstChild.textContent = S.playing ? 'pause' : 'play_arrow';
   $('#tl-playhead').style.left = `${S.t * S.pps}px`;
-  if (S.playing) {
-    const sc = $('#tl-scroll'), x = S.t * S.pps;
-    const lw = 128;
-    if (x + lw > sc.scrollLeft + sc.clientWidth - 40 || x < sc.scrollLeft) sc.scrollLeft = Math.max(0, x - 200);
+  // When the playhead moves out of view (playing, seeking, jumping, typing a time), scroll it back into view.
+  if (S.t !== S.lastScrollT) {
+    S.lastScrollT = S.t;
+    const sc = $('#tl-scroll'), lw = 128, x = lw + S.t * S.pps - sc.scrollLeft;
+    if (x > sc.clientWidth - 40 || x < lw) sc.scrollLeft = Math.max(0, S.t * S.pps - (S.playing ? 200 : sc.clientWidth / 3));
   }
 }
 
@@ -797,11 +798,11 @@ function rows() {
   });
   R.push({ key: 'chips', label: 'Callouts', icon: 'sell', lanes: Math.max(1, lanes.length), items: chipItems });
   R.push({ key: 'zoom', label: 'Zoom', icon: 'zoom_in', items: v.zooms.map((z, i) => ({ kind: 'zoom', i, s: z.t, e: z.out ?? end, text: `×${z.scale}`, ramp: z.dur })) });
-  R.push({ key: 'vo', label: 'Voice-over', icon: 'record_voice_over', items: v.vo.lines.map((l, i) => ({ kind: 'vo', i, s: l.t, e: l.t + (l.len || estLen(l.text)), text: l.text, len: l.len, noResize: true })) });
+  R.push({ key: 'vo', label: 'Voice-over', icon: 'record_voice_over', items: v.vo.lines.map((l, i) => ({ kind: 'vo', i, s: l.t, e: l.t + (l.len || estLen(l.text)), text: l.text, len: l.len, noResize: true, wave: l.len && v.audio ? { src: v.audio, from: l.t } : null })) });
   R.push({ key: 'tap', label: 'Tikken', icon: 'touch_app', items: v.taps.map((x, i) => ({ kind: 'tap', i, s: x.t - 0.25, e: x.t + 0.5, text: '', ic: x.style === 'cursor' || (!x.style && layoutOf(v) === 'browser') ? 'arrow_selector_tool' : 'touch_app', noResize: true })) });
   R.push({ key: 'sub', label: 'Ondertitels', icon: 'subtitles', items: v.subs.map((x, i) => ({ kind: 'sub', i, s: x.t, e: x.out, text: plain(x.text), cls: v.captions?.off ? 'off' : '' })) });
-  if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true }] });
-  if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m }] }); }
+  if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true, wave: { src: v.audio, from: 0 } }] });
+  if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m, wave: { src: v.music.src, from: m.media || 0 } }] }); }
   R.push({ key: 'end', label: 'Eindkaart', icon: 'flag', items: [{ kind: 'end', i: 0, s: end, e: dur, text: plain(v.tagline) || tr('Eindkaart') }] });
   return R;
 }
@@ -838,6 +839,7 @@ function renderTimeline() {
       if (it.kind === 'clips' || it.kind === 'clips2') node.append(filmstrip(listOf(it.kind)[it.i], (it.e - it.s) * pps));
       if (it.ramp) node.append(el('div', { class: 'ramp', style: `width:${it.ramp * pps}px` }));
       if (it.kind === 'vo' && it.len) node.append(el('div', { class: 'len', style: `width:100%` }));
+      if (it.wave) node.append(waveform(it.wave.src, it.wave.from, it.e - it.s, (it.e - it.s) * pps));
       if (it.env) node.append(envelopeSvg(it.env, 'env'));
       if (it.ic) node.append(icon(it.ic));
       node.append(el('span', { class: 'lbl' }, it.text));
@@ -870,6 +872,46 @@ function layoutTimeline(redraw = []) {
     if (redraw.includes(itemKey(it))) node.querySelector('.thumb')?.replaceWith(filmstrip(listOf(it.kind)[it.i], (it.e - it.s) * S.pps));
   }
   onTime();
+}
+// Waveforms: decoded once per audio file into ~100 peaks per second, then drawn under the block that plays it.
+const PEAK_RATE = 100;
+function audioPeaks(name) {
+  if (name in S.peaks) return S.peaks[name];
+  S.peaks[name] = null;
+  fetch(`/assets/vo/${encodeURIComponent(name)}`).then(r => r.arrayBuffer()).then(buf => {
+    const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 44100);
+    return ctx.decodeAudioData(buf);
+  }).then(ab => {
+    const n = Math.max(1, Math.ceil(ab.duration * PEAK_RATE)), per = ab.sampleRate / PEAK_RATE, peaks = new Float32Array(n);
+    for (let c = 0; c < ab.numberOfChannels; c++) {
+      const d = ab.getChannelData(c);
+      for (let i = 0; i < n; i++) { let m = 0; for (let j = Math.floor(i * per), e = Math.min(d.length, Math.floor((i + 1) * per)); j < e; j++) { const a = Math.abs(d[j]); if (a > m) m = a; } if (m > peaks[i]) peaks[i] = m; }
+    }
+    S.peaks[name] = { peaks, dur: ab.duration };
+    renderTimeline();
+  }).catch(() => { S.peaks[name] = { peaks: new Float32Array(0), dur: 0 }; });
+  return null;
+}
+// A waveform canvas for the part of `name` starting at `from` seconds and lasting `len` seconds, `width` px wide.
+function waveform(name, from, len, width, cls = 'wave') {
+  const canvas = el('canvas', { class: cls });
+  const pk = audioPeaks(name);
+  if (!pk || !pk.peaks.length) return canvas;
+  const h = 26, w = Math.max(1, Math.round(width));
+  const dpr = Math.min(devicePixelRatio || 1, 16000 / w);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = 'currentColor';
+  const mid = h / 2;
+  for (let x = 0; x < w; x++) {
+    const a = Math.max(0, Math.floor((from + x / w * len) * PEAK_RATE)), b = Math.min(pk.peaks.length, Math.max(a + 1, Math.ceil((from + (x + 1) / w * len) * PEAK_RATE)));
+    let m = 0;
+    for (let i = a; i < b; i++) if (pk.peaks[i] > m) m = pk.peaks[i];
+    const hh = Math.max(m > 0 ? 1 : 0, Math.min(1, m * 1.4) * mid);
+    ctx.fillRect(x, mid - hh, 1, hh * 2);
+  }
+  return canvas;
 }
 // Clip filmstrips: the frames under each part of a clip on the timeline, drawn from one strip per file.
 function clipThumbs(name) {
@@ -1990,7 +2032,20 @@ function openBatch() {
 }
 
 function setPreviewFormat(k) { S.pf = k; try { localStorage.setItem('ms-pf', k); } catch {} renderFormatBar(); fitStage(); if (V()) { reloadPreview(); renderInspector(); } }
-function zoomTimeline(f) { S.pps = Math.max(20, Math.min(240, S.pps * f)); $('#tl-zoom').value = S.pps; try { localStorage.setItem('ms-pps', S.pps); } catch {} renderTimeline(); }
+// Zoom the timeline and keep the time under `clientX` (default: the playhead) at the same spot on screen.
+function setZoom(pps, clientX) {
+  const sc = $('#tl-scroll'), old = S.pps;
+  pps = Math.max(8, Math.min(240, pps));
+  if (pps === old) return;
+  const box = sc.getBoundingClientRect();
+  const x = clientX != null ? clientX - box.left : Math.max(128, Math.min(sc.clientWidth - 20, 128 + S.t * old - sc.scrollLeft));
+  const t = (sc.scrollLeft + x - 128) / old;
+  S.pps = pps; $('#tl-zoom').value = pps;
+  try { localStorage.setItem('ms-pps', String(pps)); } catch {}
+  renderTimeline();
+  sc.scrollLeft = Math.max(0, 128 + t * pps - x);
+}
+function zoomTimeline(f) { setZoom(S.pps * f); }
 const revealRenders = () => api('/api/workspace/reveal', { method: 'POST', body: JSON.stringify({ what: 'renders' }) });
 
 // ---------- menu bar ----------
@@ -2443,13 +2498,23 @@ function init() {
   $('#beats-toggle').onchange = e => { S.snapBeats = e.target.checked; try { localStorage.setItem('ms-beats', S.snapBeats ? '1' : ''); } catch {} renderTimeline(); };
   const zoom = $('#tl-zoom');
   zoom.value = S.pps = +(localStorage.getItem('ms-pps') || 70);
-  zoom.oninput = () => { S.pps = +zoom.value; localStorage.setItem('ms-pps', zoom.value); renderTimeline(); };
+  zoom.oninput = () => setZoom(+zoom.value);
   $('#tl-fit').onclick = fitTimeline;
+  // Middle mouse button: drag to pan the timeline in both directions.
+  $('#tl-scroll').addEventListener('pointerdown', e => {
+    if (e.button !== 1) return;
+    e.preventDefault(); e.stopPropagation();
+    const sc = $('#tl-scroll'), x0 = e.clientX, y0 = e.clientY, l0 = sc.scrollLeft, t0 = sc.scrollTop;
+    sc.classList.add('panning');
+    const move = ev => { sc.scrollLeft = l0 - (ev.clientX - x0); sc.scrollTop = t0 - (ev.clientY - y0); };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); sc.classList.remove('panning'); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  }, true);
+  $('#tl-scroll').addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }, true);
   $('#tl-scroll').addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    S.pps = Math.max(8, Math.min(240, S.pps * (e.deltaY < 0 ? 1.12 : 0.89)));
-    zoom.value = S.pps; renderTimeline();
+    setZoom(S.pps * (e.deltaY < 0 ? 1.12 : 0.89), e.clientX);
   }, { passive: false });
   $('#tl-ruler').addEventListener('pointerdown', e => { S.player?.pause(); seek(xToTime(e)); scrub(e); });
   $('#tl-playhead span').addEventListener('pointerdown', e => { S.player?.pause(); scrub(e); });
