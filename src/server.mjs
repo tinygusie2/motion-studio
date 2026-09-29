@@ -10,6 +10,7 @@ import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { layouts, formats, transitions, normalize, defaultTheme, defaultChipColors } from './template.mjs';
 import { toSrt, wordsFromWhisper, subsFromWords } from './captions.mjs';
+import { createDemoManager } from './demo-session.mjs';
 import { parseSilences, silenceLevels, speechSegments, mapFromSegments } from './silence.mjs';
 import { whisperStatus, installWhisper, whisperJson, cacheKey, whisperModels, defaultWhisperModel } from './whisper.mjs';
 import { APP_ROOT, GSAP_FILE, Workspace, createWorkspace, isWorkspace, loadSettings, saveSettings, validId } from './workspace.mjs';
@@ -80,7 +81,7 @@ function tools(settings) {
 // only be taken off the list.
 export async function startServer({ port = 3400, host = '127.0.0.1', workspace, trash } = {}) {
   let settings = loadSettings();
-  let ws = null;
+  let ws = null, demo = null;
   const jobs = new Map();
 
   function openWorkspace(dir) {
@@ -90,6 +91,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
     settings.recents = [dir, ...settings.recents.map(r => resolve(r)).filter(r => r !== dir && isWorkspace(r))].slice(0, 8);
     saveSettings(settings);
     jobs.clear();
+    demo?.close();
     return ws;
   }
   // Takes a project off the list of recent projects (its folder stays). When it was the open one, the next recent
@@ -101,7 +103,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
     if (wasOpen) {
       const next = settings.recents.find(isWorkspace);
       if (next) return openWorkspace(next);
-      ws = null; settings.workspace = null; jobs.clear();
+      ws = null; settings.workspace = null; jobs.clear(); demo?.close();
     }
     saveSettings(settings);
   }
@@ -412,7 +414,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
 
   function state() {
     const t = tools(settings);
-    const base = { canTrash: !!trash, settings: { ...settings, detected: t }, whisper: { ...whisperStatus(settings), models: whisperModels }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, transitions, defaultTheme, defaultChipColors };
+    const base = { canTrash: !!trash, settings: { ...settings, detected: t }, whisper: { ...whisperStatus(settings), models: whisperModels }, layouts: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.label])), screens: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.screen])), insets: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.inset])), devs: Object.fromEntries(Object.entries(layouts).map(([k, l]) => [k, l.dev])), formats, transitions, defaultTheme, defaultChipColors };
     if (!ws) return { ...base, workspace: null };
     return {
       ...base,
@@ -430,6 +432,8 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
   }
 
   // ---------- routes ----------
+  demo = createDemoManager({ getWorkspace: () => ws, getSettings: () => settings, run });
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://x');
@@ -443,8 +447,10 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
       }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
-      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
+      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence|gestures|demo)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 
+      if (p.startsWith('/api/demo') && !ws) return send(res, 400, { error: 'Open eerst een project.' });
+      if (await demo.route(p, method, req, res, { readJsonBody, send, url })) return;
       if (p === '/api/state' && method === 'GET') return send(res, 200, state());
       if (p === '/api/settings' && method === 'PUT') { settings = saveSettings({ ...settings, ...(await readJsonBody(req)) }); return send(res, 200, state()); }
       if (p === '/api/workspace/open' && method === 'POST') {
@@ -597,6 +603,8 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
       send(res, 500, { error: String(err.message || err) });
     }
   });
+
+  server.once('close', () => demo.shutdown());
 
   // `port` may be a list: the first free one wins (0 = any free port).
   const listen = p => new Promise((ok, fail) => { server.once('error', fail); server.listen(p, host, () => { server.off('error', fail); ok(); }); });

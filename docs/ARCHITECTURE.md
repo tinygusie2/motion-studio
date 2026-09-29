@@ -39,6 +39,7 @@ http://localhost:3400. That's the quickest way to develop the UI.
   with the UI at `/lib/audio.mjs`.
 - `src/keyframes.mjs`: clip keyframes (easings, interpolation, the GSAP plan). It is shared with the UI at `/lib/keyframes.mjs`.
 - `src/edit.mjs`, `src/silence.mjs`: cutting time out of a video, and finding silences. Shared with the UI at `/lib/edit.mjs` and `/lib/silence.mjs`.
+- `src/demo-session.mjs`, `src/demo-web.mjs`, `src/demo-android.mjs`, `src/cdp.mjs`, `src/gestures.mjs`, `src/demo.mjs`: recording a demo of an app (see below); `ui/demo.js` is its window. `gestures` and `demo` are shared with the UI.
 - `src/whisper.mjs`: finding, installing and running whisper.cpp for speech recognition.
 - `src/captions.mjs`: captions (word timing, grouping, splitting, SRT/VTT). It is shared with the UI at
   `/lib/captions.mjs`.
@@ -212,6 +213,43 @@ Captions can also come from the sound of the clips: without a voice/audio track,
 the sound of the clips that have `sound: true` into one wav in video time. Before recognition, long silences
 (0.6 s and more, `speechSegments()`) are taken out of the audio, because Whisper stretches the first word after a
 silence over it; the word times are mapped back afterwards (`mapFromSegments()`).
+
+## Demo recording (Demo studio)
+
+*Demo* in the media pool (or File → Demo opnemen…) opens `ui/demo.js`: you operate your app on a device in the editor,
+and everything you do is recorded with its time. The app itself runs elsewhere; the editor shows its picture on a
+canvas and forwards pointer, wheel and keyboard events. `src/demo-session.mjs` holds the one open session and the
+HTTP routes (`/api/demo/…`: `open`, `frames` (server-sent events with the live picture), `input`, `fill`, `navigate`,
+`record`, `data`, `devices`, `status`, and `DELETE /api/demo/session`).
+
+Two sources implement the same small interface (`input(ev)`, `fill(dataset, mode)`, `startRecording()`,
+`stopRecording()`, `close()`, and `css` / `dsf` for the picture):
+- **Web** (`src/demo-web.mjs`, `src/cdp.mjs`): a Chrome (installed Chrome or Edge, else the headless Chrome HyperFrames
+  downloads) started with a throwaway profile and driven over the DevTools protocol with Node's own WebSocket. The page
+  gets the CSS size, pixel density and touch input of the layout (`deviceFor`: a phone is 390×844 at 2×, which has the
+  shape of the 616×1334 layout screen). The picture is the screencast; touch events are dispatched as touch (mouse for
+  the browser layout). A recording keeps every screencast frame with its timestamp and `encodeFrames` makes a
+  constant-frame-rate mp4 from them with ffmpeg's concat demuxer.
+- **Android** (`src/demo-android.mjs`): adb. The live picture is a stream of `screencap` screenshots (fast while
+  something happens, one a second otherwise); a finger on the canvas becomes `input tap` / `input swipe` when it is
+  lifted, and the log gets the gesture at the time the phone did it. The recording is `screenrecord` on the device (its
+  timestamps are exact; a stream piped through ffmpeg is timestamped by when it arrives, which shows changes late), pulled
+  and made constant-frame-rate. Text goes through `input text`, fields are found with `uiautomator dump`. It never picks a
+  device: the user chooses one, and the test only runs against a serial named in `MS_TEST_ANDROID`.
+
+The log (`down/move/up/wheel/text` events, seconds since the start) becomes gestures in `src/gestures.mjs`
+(`analyzeGestures`: tap, long press, swipe, scroll (wheel) as a swipe, typing), and `tapsFromGestures` turns those into the
+video's `taps`. A tap with `x2`/`y2`/`dur` is a swipe (the finger drags with a trail) and one with `hold` is a long press
+(`src/template.mjs`). `insetFor(layout, css)` maps the device's CSS pixels into the device element taps are placed in
+(`inset` of the layouts), so a tap lands on the same spot of the screen whatever the layout. The recording is added to the
+video as a clip at the playhead; the taps can be shifted in time first (Android is a moment behind).
+
+**Demo data** (`src/demo.mjs`, kept per project in `demo.json`): datasets of made-up values (`fields`) and app
+storage (`storage`: localStorage, sessionStorage, cookies, set before the app runs). `fieldKind` recognises an input from
+its type, name, id, placeholder, label and autocomplete (Dutch and English, whole words only); `pickValue` gives the
+dataset's value for it. "Vul alle velden in" taps every empty field and types its value, with a human typing rhythm
+(`typingPlan`); the taps and typing land in the recording like anything else. A chip types exactly its value in the
+focused field.
 
 ## Clip keyframes
 

@@ -1,6 +1,7 @@
 // Motion Studio editor. Edits specs/<id>.json (the same format build.mjs reads) with a live preview.
 import { captionStyles, captionStyleHints, captionStyle, splitSub, parseSubtitles, tokens } from '/lib/captions.mjs';
 import { cutRanges, wordRanges } from '/lib/edit.mjs';
+import { createDemoStudio } from '/ui/demo.js';
 import { silenceCuts, silenceLevels } from '/lib/silence.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { starters, starterSpec } from '/lib/starters.mjs';
@@ -57,7 +58,7 @@ async function loadState() {
   applyState(await api('/api/state'));
 }
 function applyState(s) {
-  Object.assign(S, { canTrash: s.canTrash, workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, whisper: s.whisper, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
+  Object.assign(S, { canTrash: s.canTrash, workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, insets: s.insets, whisper: s.whisper, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
   $('#project-name').textContent = s.workspace?.name || 'Geen project';
   if (!s.workspace) return;
   Object.assign(S, { list: s.videos, clipAudio: s.clipAudio || {}, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
@@ -260,6 +261,7 @@ function wirePreviewDom(doc) {
     '.ms-tapmark:not(.near):not(.sel) { opacity: .45; }' +
     '.ms-tapmark.near::before { border-color: #fff; }' +
     '.ms-tapmark.sel::before { border-color: #ffb77d; box-shadow: 0 0 0 6px #ffb77d55, 0 4px 14px #0008; }' +
+    '.ms-tapmark.end::before { border-style: dashed; width: 44px; height: 44px; left: -22px; top: -22px; } .ms-tapmark.end b { left: -22px; top: -22px; width: 44px; height: 44px; }' +
     '.ms-tapmark.drag { cursor: grabbing; } .ms-tapmode #phone { cursor: crosshair; }';
   doc.head.append(style);
   markPreviewSelection(doc);
@@ -399,6 +401,15 @@ function drawTapMarks(doc = $('.pv.front')?.contentDocument) {
     m.style.cssText = `left:${t.x}px;top:${t.y}px`;
     m.innerHTML = `<b>${i + 1}</b><small>${t.t.toFixed(1)}s</small>`;
     layer.append(m);
+    // A swipe also gets a mark where it ends, to drag.
+    if (t.x2 != null) {
+      const e = doc.createElement('div');
+      e.className = `ms-tapmark end${near ? ' near' : ''}${sel ? ' sel' : ''}`;
+      e.dataset.i = i; e.dataset.end = '1';
+      e.style.cssText = `left:${t.x2}px;top:${t.y2 ?? t.y}px`;
+      e.innerHTML = `<b>→</b>`;
+      layer.append(e);
+    }
   });
 }
 function moveTapLive(doc, i, x, y) {
@@ -406,16 +417,18 @@ function moveTapLive(doc, i, x, y) {
 }
 function dragTapMark(doc, mark, e) {
   e.preventDefault(); e.stopPropagation();
-  const i = +mark.dataset.i;
+  const i = +mark.dataset.i, end = mark.dataset.end === '1';
   if (!(S.sel?.kind === 'tap' && S.sel.i === i)) { S.sel = { kind: 'tap', i }; renderInspector(); renderTimeline(); drawTapMarks(doc); }
-  const m = doc.querySelector(`.ms-tapmark[data-i="${i}"]`);
+  const m = doc.querySelector(`.ms-tapmark[data-i="${i}"]${end ? '[data-end]' : ':not([data-end])'}`);
   m.classList.add('drag');
   let pt = null;
-  const move = ev => { pt = devicePoint(doc, ev); moveTapLive(doc, i, ...pt); };
+  const move = ev => { pt = devicePoint(doc, ev); if (end) { m.style.left = `${pt[0]}px`; m.style.top = `${pt[1]}px`; } else moveTapLive(doc, i, ...pt); };
   const up = () => {
     doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', up);
     m.classList.remove('drag');
-    if (pt) commit(v => { v.taps[i].x = pt[0]; v.taps[i].y = pt[1]; }, { quiet: true });
+    // The end of a swipe changes the animation itself, so the preview is rebuilt for it.
+    if (pt) commit(v => { if (end) { v.taps[i].x2 = pt[0]; v.taps[i].y2 = pt[1]; } else { v.taps[i].x = pt[0]; v.taps[i].y = pt[1]; } }, end ? {} : { quiet: true });
+    if (pt && end) renderInspector();
   };
   doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', up);
 }
@@ -481,7 +494,7 @@ function itemRange(kind, it, i) {
     case 'zoom': return [it.t, it.out ?? END()];
     case 'vo': return [it.t, it.t + (it.len || estLen(it.text))];
     case 'sub': return [it.t, it.out];
-    case 'tap': return [it.t - 0.25, it.t + 0.5];
+    case 'tap': return [it.t - 0.25, it.t + 0.5 + tapLength(it)];
     case 'end': return [END(), DUR()];
     case 'audio': return [0, DUR()];
     case 'music': { const m = musicMix(V()); return [m.start, m.start + m.dur]; }
@@ -782,6 +795,9 @@ function wireMediaDrop() {
   });
 }
 
+// A swipe lasts as long as it takes, a long press as long as it is held.
+const tapLength = t => (t.x2 != null ? +t.dur || 0.4 : 0) + (t.x2 == null && t.hold > 0 ? +t.hold : 0);
+
 // Timeline rows are derived from the spec each render.
 function rows() {
   const v = V(), end = END(), dur = DUR();
@@ -803,7 +819,7 @@ function rows() {
   R.push({ key: 'chips', label: 'Callouts', icon: 'sell', lanes: Math.max(1, lanes.length), items: chipItems });
   R.push({ key: 'zoom', label: 'Zoom', icon: 'zoom_in', items: v.zooms.map((z, i) => ({ kind: 'zoom', i, s: z.t, e: z.out ?? end, text: `×${z.scale}`, ramp: z.dur })) });
   R.push({ key: 'vo', label: 'Voice-over', icon: 'record_voice_over', items: v.vo.lines.map((l, i) => ({ kind: 'vo', i, s: l.t, e: l.t + (l.len || estLen(l.text)), text: l.text, len: l.len, noResize: true, wave: l.len && v.audio ? { src: v.audio, from: l.t } : null })) });
-  R.push({ key: 'tap', label: 'Tikken', icon: 'touch_app', items: v.taps.map((x, i) => ({ kind: 'tap', i, s: x.t - 0.25, e: x.t + 0.5, text: '', ic: x.style === 'cursor' || (!x.style && layoutOf(v) === 'browser') ? 'arrow_selector_tool' : 'touch_app', noResize: true })) });
+  R.push({ key: 'tap', label: 'Tikken', icon: 'touch_app', items: v.taps.map((x, i) => ({ kind: 'tap', i, s: x.t - 0.25, e: x.t + 0.5 + tapLength(x), text: '', ic: x.x2 != null ? 'swipe' : x.style === 'cursor' || (!x.style && layoutOf(v) === 'browser') ? 'arrow_selector_tool' : 'touch_app', noResize: true })) });
   R.push({ key: 'sub', label: 'Ondertitels', icon: 'subtitles', items: v.subs.map((x, i) => ({ kind: 'sub', i, s: x.t, e: x.out, text: plain(x.text), cls: v.captions?.off ? 'off' : '' })) });
   if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true, wave: { src: v.audio, from: 0 } }] });
   if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m, wave: { src: v.music.src, from: m.media || 0 } }] }); }
@@ -1248,9 +1264,20 @@ function renderInspector() {
     el('p', { class: 'hint' }, 'Sleep het oranje bolletje in de preview, of klik op het apparaat om de tik daarheen te zetten. Met Tik-modus (T) zet elke klik een nieuwe tik op de playhead, ook tijdens het afspelen.'),
     el('button', { class: S.tapMode ? 'primary' : '', onclick: () => { setTapMode(!S.tapMode); renderInspector(); } }, icon('touch_app'), S.tapMode ? 'Tik-modus stoppen' : 'Tik-modus'),
     field('Moment (s)', it.t, (x, v) => (v.taps[i].t = Math.max(0.25, x)), { type: 'number', step: 0.05, min: 0.25 }),
+    selectField('Soort', it.x2 != null ? 'swipe' : it.hold > 0 ? 'hold' : 'tap', [['tap', 'Tik'], ['hold', 'Lang indrukken'], ['swipe', 'Swipe']], (x, v) => {
+      const t = v.taps[i], [, h] = S.devs?.[layoutOf(v)] || [640, 1358];
+      delete t.x2; delete t.y2; delete t.dur; delete t.hold;
+      if (x === 'hold') t.hold = 0.8;
+      if (x === 'swipe') { t.x2 = t.x; t.y2 = Math.round(Math.max(40, t.y - h * 0.3)); t.dur = 0.4; }
+    }),
     el('div', { class: 'field-row' },
-      field('X (px)', it.x, (x, v) => (v.taps[i].x = x), { type: 'number', step: 5 }),
-      field('Y (px)', it.y, (x, v) => (v.taps[i].y = x), { type: 'number', step: 5 })),
+      field(it.x2 != null ? 'Begin X (px)' : 'X (px)', it.x, (x, v) => (v.taps[i].x = x), { type: 'number', step: 5 }),
+      field(it.x2 != null ? 'Begin Y (px)' : 'Y (px)', it.y, (x, v) => (v.taps[i].y = x), { type: 'number', step: 5 })),
+    it.x2 != null ? el('div', { class: 'field-row' },
+      field('Eind X (px)', it.x2, (x, v) => (v.taps[i].x2 = x), { type: 'number', step: 5 }),
+      field('Eind Y (px)', it.y2 ?? it.y, (x, v) => (v.taps[i].y2 = x), { type: 'number', step: 5 })) : null,
+    it.x2 != null ? field('Duur swipe (s)', it.dur ?? 0.4, (x, v) => (v.taps[i].dur = Math.max(0.12, x)), { type: 'number', step: 0.05, min: 0.12, max: 2 }) : null,
+    it.x2 == null && it.hold > 0 ? field('Vasthouden (s)', it.hold, (x, v) => (v.taps[i].hold = Math.max(0.15, x)), { type: 'number', step: 0.1, min: 0.15, max: 5 }) : null,
     selectField('Weergave', it.style || '', [['', layoutOf() === 'browser' ? 'Automatisch (muisaanwijzer)' : 'Automatisch (vinger)'], ['finger', 'Vinger'], ['cursor', 'Muisaanwijzer']], (x, v) => { if (x) v.taps[i].style = x; else delete v.taps[i].style; }),
     el('p', { class: 'hint' }, 'Tip: zet de tik net vóór het moment dat er in de opname iets verandert. Een tik zoomt mee met een zoom.'),
     actions()
@@ -2223,6 +2250,7 @@ function buildMenus() {
       { sep: true },
       { label: 'Projecten…', key: 'Ctrl+O', icon: 'folder_open', run: openProjects },
       { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace },
+      { label: 'Demo opnemen…', icon: 'smart_display', run: openDemo, disabled: !S.workspace },
       { label: 'Rendermap openen', key: 'Ctrl+Shift+R', icon: 'folder', run: revealRenders, disabled: !S.workspace },
       { sep: true },
       { label: 'Instellingen…', key: 'Ctrl+,', icon: 'settings', run: openSettings },
@@ -2256,7 +2284,8 @@ function buildMenus() {
       { label: 'Ondertitels uit voice-over', run: subsFromVo, disabled: !hasV() || !V().vo.lines.some(l => l.text?.trim()) },
       { label: 'Ondertitels importeren (.srt / .vtt)…', run: () => pickLocalFile('.srt,.vtt', importSubs), disabled: !hasV() },
       { sep: true },
-      { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace }
+      { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace },
+      { label: 'Demo opnemen…', icon: 'smart_display', run: openDemo, disabled: !S.workspace }
     ] },
     { label: 'Beeld', items: () => [
       { header: 'Preview-formaat' },
@@ -2479,6 +2508,8 @@ function openSettings() {
   $('#set-python').placeholder = d.python || 'pad naar python.exe';
   $('#set-piper').value = s.piperVoices || '';
   $('#set-piper').placeholder = d.piperVoices || 'map met .onnx stemmen';
+  $('#set-chrome').value = s.chrome || '';
+  $('#set-adb').value = s.adb || '';
   $('#set-downloads').checked = s.copyToDownloads !== false;
   $('#set-lang').value = s.uiLang || 'auto';
   $('#set-detected').textContent = `Nu gebruikt: Python ${d.python || '—'} · Piper-stemmen ${d.piperVoices || '—'}. Laat leeg voor automatisch.`;
@@ -2488,7 +2519,7 @@ async function saveSettings() {
   const langBefore = S.settings.uiLang || 'auto';
   applyState(await api('/api/settings', { method: 'PUT', body: JSON.stringify({
     hyperframes: $('#set-hf').value.trim() || undefined, python: $('#set-python').value.trim(),
-    piperVoices: $('#set-piper').value.trim(), copyToDownloads: $('#set-downloads').checked, uiLang: $('#set-lang').value
+    piperVoices: $('#set-piper').value.trim(), chrome: $('#set-chrome').value.trim(), adb: $('#set-adb').value.trim(), copyToDownloads: $('#set-downloads').checked, uiLang: $('#set-lang').value
   }) }));
   $('#dlg-settings').close();
   // A new interface language comes with the page itself: save the video, then reload.
@@ -2524,6 +2555,13 @@ function wireDialogs() {
       'undo': undo, 'redo': redo, 'play': togglePlay
     })[cmd]?.());
   }
+}
+
+// ---------- demo studio (ui/demo.js) ----------
+let demoStudio = null;
+function openDemo() {
+  demoStudio ??= createDemoStudio({ S, api, el, icon, toast, V, round, commit, renderAll, select, loadState, flushSave, layoutOf: () => (V() ? layoutOf() : 'phone') });
+  return demoStudio.open();
 }
 
 // ---------- uploads ----------
@@ -2593,6 +2631,7 @@ function init() {
   $('#btn-redo').onclick = redo;
   $('#btn-render').onclick = renderMp4;
   $('#btn-tapmode').onclick = () => setTapMode(!S.tapMode);
+  $('#btn-demo').onclick = openDemo;
   $('#btn-play').onclick = togglePlay;
   $('#btn-start').onclick = () => seek(0);
   $('#btn-prev').onclick = () => { S.player?.pause(); seek(S.t - 1 / FPS); };

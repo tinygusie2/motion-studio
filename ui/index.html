@@ -41,10 +41,13 @@
     <section class="grow media">
       <div class="row-between">
         <h3>Media</h3>
-        <label class="upload" title="Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)">
-          <span class="ms">upload</span>Upload
-          <input id="upload" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp" multiple hidden />
-        </label>
+        <span class="media-actions">
+          <button id="btn-demo" class="upload" title="Bedien je app hier en neem het op, met elke tik en swipe"><span class="ms">smart_display</span>Demo</button>
+          <label class="upload" title="Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)">
+            <span class="ms">upload</span>Upload
+            <input id="upload" type="file" accept="video/*,audio/*,image/png,image/jpeg,image/webp" multiple hidden />
+          </label>
+        </span>
       </div>
       <div class="media-tabs" role="tablist">
         <button data-tab="clips" role="tab"><span class="ms">movie</span>Clips<b></b></button>
@@ -180,6 +183,8 @@
     <label>HyperFrames-versie (voor render en Engelse TTS)<input id="set-hf" /></label>
     <label>Python met Kokoro/Piper (TTS)<div class="path-row"><input id="set-python" /><button data-browse="set-python" data-file="1" class="ghost">Kies…</button></div></label>
     <label>Map met Piper-stemmen (.onnx)<div class="path-row"><input id="set-piper" /><button data-browse="set-piper" class="ghost">Kies…</button></div></label>
+    <label>Chrome of Edge voor demo-opnames (leeg = automatisch)<div class="path-row"><input id="set-chrome" placeholder="C:\Program Files\Google\Chrome\Application\chrome.exe" /><button data-browse="set-chrome" data-file="1" class="ghost">Kies…</button></div></label>
+    <label>adb voor Android-demo's (leeg = automatisch)<div class="path-row"><input id="set-adb" placeholder="…\platform-toolsdb.exe" /><button data-browse="set-adb" data-file="1" class="ghost">Kies…</button></div></label>
     <label class="check"><input id="set-downloads" type="checkbox" /> Renders ook naar Downloads kopiëren</label>
     <label>Taal van de interface<select id="set-lang"><option value="auto">Automatisch</option><option value="nl" class="no-i18n">Nederlands</option><option value="en" class="no-i18n">English</option></select></label>
     <p class="hint" id="set-detected"></p>

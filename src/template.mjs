@@ -9,14 +9,16 @@ export const W = 1080, H = 1920;
 
 // Device layouts. `enter` is how the device animates in; `screen` is the CSS size of its .screen area
 // (keep in sync with the .L-<name> rules below), used to place cropped/fitted clips and for the editor's fit check.
+// `inset` = [x, y, scale]: where the screen's pixels land in the device element that taps are placed in (a point (sx, sy) of
+// the screen is at (x + sx * scale, y + sy * scale)), so a demo recorded on a screen of `screen` size can place its taps.
 // `box` is the device area in the 1080×1920 stage (both phones for dual, incl. their name tags), used to place the
 // stage in other formats; `dev` is the size of one device element (#phone), in which tap positions are given.
 export const layouts = {
-  phone: { label: 'Telefoon', devices: 1, enter: 'rise', screen: [616, 1334], box: [220, 572, 640, 1358], dev: [640, 1358] },
-  dual: { label: 'Twee telefoons', devices: 2, enter: 'rise', screen: [616, 1334], box: [44, 584, 992, 1122], dev: [461, 978] },
-  tablet: { label: 'Tablet', devices: 1, enter: 'rise', screen: [864, 1176], box: [90, 600, 900, 1212], dev: [900, 1212] },
-  browser: { label: 'Browservenster (desktop)', devices: 1, enter: 'rise', screen: [1000, 636], box: [40, 690, 1000, 700], dev: [1000, 700] },
-  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], box: [0, 0, W, H], dev: [W, H] }
+  phone: { label: 'Telefoon', devices: 1, enter: 'rise', screen: [616, 1334], inset: [12, 12, 1], box: [220, 572, 640, 1358], dev: [640, 1358] },
+  dual: { label: 'Twee telefoons', devices: 2, enter: 'rise', screen: [616, 1334], inset: [8.64, 8.64, 0.72], box: [44, 584, 992, 1122], dev: [461, 978] },
+  tablet: { label: 'Tablet', devices: 1, enter: 'rise', screen: [864, 1176], inset: [18, 18, 1], box: [90, 600, 900, 1212], dev: [900, 1212] },
+  browser: { label: 'Browservenster (desktop)', devices: 1, enter: 'rise', screen: [1000, 636], inset: [0, 64, 1], box: [40, 690, 1000, 700], dev: [1000, 700] },
+  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] }
 };
 
 // Output formats. Everything is designed on the 1080×1920 stage; another format frames that stage differently:
@@ -147,7 +149,7 @@ export function build(v, brand, fmt = '9:16') {
   const F = formats[formatOf(fmt)], FW = F.w, FH = F.h, fit = stageFit(fmt, L);
   // Taps (tap/click markers on the first device, in its own pixels): a finger dot on touch devices, a pointer in the browser.
   const pointer = t => (t.style || (L === 'browser' ? 'cursor' : 'finger')) === 'cursor';
-  const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${pointer(t)
+  const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${t.x2 != null ? '<i class="tap-trail"></i>' : ''}${pointer(t)
     ? '<svg class="tap-cursor" viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 3.1-1.4-2.9-6.5 6.3-.3z"/></svg>'
     : '<i class="tap-dot"></i>'}</div>`).join('');
   const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
@@ -221,7 +223,7 @@ export function build(v, brand, fmt = '9:16') {
       const heads = ${JSON.stringify(v.heads.map(h => h.t))};
       const chips = ${JSON.stringify(v.chips.map(({ t, out, count, suffix }) => ({ t, out, count, suffix })))};
       const zooms = ${JSON.stringify(v.zooms)};
-      const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t) })))};
+      const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t), ...(t.x2 != null && { swipe: true, dx: Math.round(t.x2 - t.x), dy: Math.round((t.y2 ?? t.y) - t.y), dur: Math.max(0.12, +t.dur || 0.4) }), ...(t.hold > 0 && t.x2 == null && { hold: +t.hold }) })))};
       const clipTrs = ${JSON.stringify(clipTrs)};
       const clipKfs = ${JSON.stringify(clipKfs)};
       const END = ${END};
@@ -292,15 +294,31 @@ export function build(v, brand, fmt = '9:16') {
         else tl.to('#top-fade', { opacity: 0, duration: 0.3 }, END - 0.3);
       });
 
-      // Taps: the finger/pointer arrives, presses, a ring spreads out, then it lifts away.
+      // Taps: the finger/pointer arrives and presses, a ring spreads out, then it lifts away. A tap with a hold time stays pressed
+      // that long (and a second ring shows the release); a tap with a way to go (x2, y2) is a swipe: the finger drags along
+      // with a trail behind it.
       taps.forEach((p, i) => {
         const id = '#tap' + i, hand = id + (p.cursor ? ' .tap-cursor' : ' .tap-dot');
         if (p.cursor) tl.fromTo(hand, { opacity: 0, x: 70, y: 90 }, { opacity: 1, x: 0, y: 0, duration: 0.4, ease: 'power3.out', immediateRender: false }, p.t - 0.45);
         else tl.fromTo(hand, { opacity: 0, scale: 1.5 }, { opacity: 1, scale: 1, duration: 0.2, ease: 'power2.out', immediateRender: false }, p.t - 0.22);
         tl.to(hand, { scale: 0.82, duration: 0.09, ease: 'power2.in' }, p.t);
-        tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, p.t + 0.09);
         tl.fromTo(id + ' .tap-ring', { opacity: 0.95, scale: 0.5 }, { opacity: 0, scale: 2.8, duration: 0.6, ease: 'power2.out', immediateRender: false }, p.t);
-        tl.to(hand, { opacity: 0, duration: 0.25, ease: 'power1.in' }, p.t + (p.cursor ? 0.7 : 0.45));
+        let lift = p.t + (p.cursor ? 0.7 : 0.45);
+        if (p.swipe) {
+          const trail = id + ' .tap-trail', go = p.t + 0.09;
+          tl.set(trail, { rotation: Math.atan2(p.dy, p.dx) * 180 / Math.PI, transformOrigin: '0% 50%', width: Math.max(1, Math.hypot(p.dx, p.dy)), opacity: 0 }, 0);
+          tl.fromTo(trail, { scaleX: 0, opacity: 0.85 }, { scaleX: 1, opacity: 0.85, duration: p.dur, ease: 'power2.inOut', immediateRender: false }, go);
+          tl.to(hand, { x: p.dx, y: p.dy, duration: p.dur, ease: 'power2.inOut' }, go);
+          tl.to(trail, { opacity: 0, duration: 0.3, ease: 'power1.in' }, go + p.dur);
+          tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, go + p.dur);
+          lift = go + p.dur + (p.cursor ? 0.3 : 0.2);
+        } else if (p.hold) {
+          const up = p.t + Math.max(0.15, p.hold);
+          tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, up);
+          tl.fromTo(id + ' .tap-ring', { opacity: 0.95, scale: 0.5 }, { opacity: 0, scale: 2.8, duration: 0.6, ease: 'power2.out', immediateRender: false }, up);
+          lift = up + (p.cursor ? 0.5 : 0.3);
+        } else tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, p.t + 0.09);
+        tl.to(hand, { opacity: 0, duration: 0.25, ease: 'power1.in' }, lift);
       });
 
       // Callout chips pop in and out.
@@ -450,6 +468,7 @@ export function build(v, brand, fmt = '9:16') {
       .tap-dot, .tap-ring { position: absolute; left: -36px; top: -36px; width: 72px; height: 72px; border-radius: 50%; opacity: 0; }
       .tap-dot { background: #ffffffd9; box-shadow: 0 0 0 7px #ffffff45, 0 12px 30px #0007; }
       .tap-ring { border: 6px solid var(--accent); }
+      .tap-trail { position: absolute; left: 0; top: -8px; height: 16px; border-radius: 8px; opacity: 0; background: linear-gradient(90deg, #ffffff00, #ffffffa6); }
       .tap-cursor { position: absolute; left: -7px; top: -4px; width: 64px; height: 64px; opacity: 0; transform-origin: 7px 4px; filter: drop-shadow(0 6px 10px #0009); }
       .tap-cursor path { fill: #fff; stroke: #111; stroke-width: 1.3; stroke-linejoin: round; }
 
