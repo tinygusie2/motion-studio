@@ -248,6 +248,8 @@ video's `taps`. A tap with `x2`/`y2`/`dur` is a swipe (the finger drags with a t
 (`inset` of the layouts), so a tap lands on the same spot of the screen whatever the layout. The recording is added to the
 video as a clip at the playhead.
 
+Fingers on the phone itself are recorded too (`src/touch.mjs`): while recording, `getevent -lt` (all devices, one process; it takes only a single device path) is read, the touch screens found with `getevent -lp` are parsed, and the first finger becomes down/move/up events in the same css pixels as canvas input. A driver only reports axes that changed, so the parser keeps the last position (seeded from `-lp`). Taps sent by the app use `input` and never pass the touch driver, so nothing is counted twice.
+
 A tap is logged when it is sent, but the screen reacts a moment later (the browser draws a frame; on Android adb starts a
 shell, the phone handles the touch, draws and encodes), and how long differs per phone and connection. So every
 recording is measured (`src/latency.mjs`): ffmpeg's scene score gives the moments the picture changed, and for every tap,

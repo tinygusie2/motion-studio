@@ -399,3 +399,20 @@ demoTest('demo studio: open an app, record taps, a swipe and filled-in data, and
   assert.ok(v.taps.some(k => k.x2 != null && k.y2 < k.y), 'the swipe up is a swipe');
   assert.ok(await dlg.evaluate(d => !d.open), 'the studio closed');
 });
+
+demoTest('demo studio: the address field keeps its focus and text while the server sends news', async t => {
+  await open(t);
+  await page.locator('#btn-demo').click();
+  const dlg = page.locator('#dlg-demo');
+  await dlg.waitFor();
+  const field = dlg.locator('.demo-side input[list=demo-apps]');
+  await field.fill('');
+  await field.click();
+  await page.keyboard.type('http://127.0.0.1:');
+  // A page opened behind the field makes the server send its state, as a real navigation does.
+  await page.evaluate(async url => { await fetch('/api/demo/open', { method: 'POST', body: JSON.stringify({ source: 'web', url, layout: 'phone' }) }); }, `http://127.0.0.1:${demoApp.address().port}/`);
+  await page.waitForFunction(() => document.querySelector('canvas.demo-canvas')?.offsetParent, null, { timeout: 20000 });
+  await page.keyboard.type('12345');
+  assert.equal(await field.inputValue(), 'http://127.0.0.1:12345');
+  assert.ok(await field.evaluate(el => el === document.activeElement), 'the field still has the focus');
+});

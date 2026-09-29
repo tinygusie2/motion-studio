@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pickValue, typingPlan } from './demo.mjs';
+import { parseTouchDevices, createTouchParser } from './touch.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const ANDROID_CSS_WIDTH = 390; // events are in this many "css" pixels across, like a phone in the browser
@@ -287,13 +288,35 @@ export class AndroidDemo {
       if (this.stream && !retry) { this.stopStream(); this.streamPaused = true; return this.startRecording(true); }
       throw new Error(`Kon niet opnemen: ${why}`);
     }
+    await this.watchTouch(); // ready before the first finger
     return this.rec.t0;
+  }
+  // The phone's own touch screen: a finger on the glass while recording is logged like one on the canvas. (Taps sent by
+  // this app through `input` do not pass the touch driver, so nothing is counted twice.)
+  async watchTouch() {
+    const rec = this.rec;
+    try {
+      const devs = parseTouchDevices(await adbRun(this.adb, this.run, this.serial, ['shell', 'getevent', '-lp']));
+      if (!devs.length || this.rec !== rec) return;
+      // Some devices have more than one touch input; whichever the finger uses is heard.
+      const parsers = new Map(devs.map(dev => [dev.path, createTouchParser(dev, this.css, (ev, at) => { if (this.rec === rec) this.log(ev, at); })]));
+      const proc = spawn(this.adb, ['-s', this.serial, 'exec-out', 'getevent', '-lt'], { windowsHide: true });
+      rec.touch = proc; rec.touchDevs = devs;
+      let buf = '';
+      proc.stdout.on('data', c => {
+        const at = Date.now(); buf += c;
+        const parts = buf.split(/\r?\n/); buf = parts.pop();
+        for (const l of parts) { const m = l.match(/(\/dev\/input\/event\d+):/); if (m) parsers.get(m[1])?.(l, at); }
+      });
+      proc.on('error', () => {}); proc.stderr.on('data', () => {});
+    } catch { /* recording goes on without */ }
   }
   async stopRecording() {
     const rec = this.rec;
     if (!rec) throw new Error('Er wordt niet opgenomen.');
     const t1 = Date.now();
     this.rec = null;
+    try { rec.touch?.kill(); } catch {}
     this.stopStream(); // the stream is a screenrecord too: the SIGINT below must reach only the recording
     await this.shell('kill -2 $(pidof screenrecord)').catch(() => {}); // SIGINT: screenrecord finishes the file properly
     await Promise.race([rec.proc.exit, sleep(6000)]);
@@ -317,6 +340,7 @@ export class AndroidDemo {
     try { this.shotProc?.kill(); } catch {}
     if (this.rec) {
       const rec = this.rec; this.rec = null;
+      try { rec.touch?.kill(); } catch {}
       await this.shell('kill -2 $(pidof screenrecord)').catch(() => {});
       await this.shell('rm', rec.remote).catch(() => {});
       this.discard(rec);

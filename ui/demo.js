@@ -179,9 +179,12 @@ export function createDemoStudio(ctx) {
   function paintSide() {
     const side = $('#demo-side');
     if (st.result) return side.replaceChildren(reviewPanel());
-    const keep = side.scrollTop;
+    const keep = side.scrollTop, a = document.activeElement;
+    const field = a && side.contains(a) && a.matches?.('input, textarea') ? { i: [...side.querySelectorAll('input, textarea')].indexOf(a), from: a.selectionStart, to: a.selectionEnd } : null;
     side.replaceChildren(sourcePanel(), dataPanel(), recordPanel());
     side.scrollTop = keep;
+    const back = field && side.querySelectorAll('input, textarea')[field.i];
+    if (back) { back.focus({ preventScroll: true }); try { back.setSelectionRange(field.from, field.to); } catch {} }
     paintCounts();
   }
 
@@ -226,7 +229,7 @@ export function createDemoStudio(ctx) {
       el('div', { class: 'insp-actions' },
         el('button', { class: 'primary', disabled: !list.length, onclick: openAndroid }, icon('play_arrow'), 'Verbinden'),
         el('button', { class: 'ghost', title: 'Opnieuw zoeken', onclick: loadDevices }, icon('refresh'))),
-      el('p', { class: 'hint' }, 'Bediening loopt via adb: een tik of swipe gebeurt zodra je loslaat. Opnames duren maximaal 3 minuten.')
+      el('p', { class: 'hint' }, 'Bediening loopt via adb: een tik of swipe gebeurt zodra je loslaat. Tijdens het opnemen worden ook aanrakingen op de telefoon zelf vastgelegd. Opnames duren maximaal 3 minuten.')
     ];
   }
   async function loadDevices() { devices = null; paintSide(); try { devices = await api('/api/demo/devices'); } catch (e) { devices = { adb: false, devices: [] }; } paintSide(); }
@@ -332,7 +335,9 @@ export function createDemoStudio(ctx) {
       const tick = () => { const s = Math.floor((Date.now() - t0) / 1000); $('#demo-time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
       tick(); st.timer = setInterval(tick, 500);
     }
-    if (!st.result) paintSide();
+    // Only when the recording starts or stops: a fresh panel on every message from the server would take the focus
+    // (and half a typed address) away from a field.
+    if (!st.result && st.paintedRec !== on) { st.paintedRec = on; paintSide(); }
   }
   async function start() {
     st.counts = { tap: 0, swipe: 0, type: 0 };

@@ -41,7 +41,7 @@ tablet, browser window or full screen) and animates everything around them:
 - **Talking-head edits**: keep a clip's sound, **cut the silences** out of it in one click, and **cut words**
   out of the video by clicking them in the captions
 - **Demo recording**: operate your web app or Android phone inside Motion Studio and record it, with every tap, swipe
-  and long press logged and turned into animated touches, and demo data (a made-up persona) typed into the forms
+  and long press logged (also the ones you make on the phone itself) and turned into animated touches, and demo data (a made-up persona) typed into the forms
 - **Zooms** onto a point you click, and **taps / clicks** that show where to look
 - **Captions** in four styles (pop, karaoke, block, classic), made from the voice-over, from any audio track with
   **speech recognition** (Whisper, on your own computer, every word at its exact moment) or imported from `.srt`/`.vtt`
