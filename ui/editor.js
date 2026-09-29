@@ -1,7 +1,13 @@
 // Motion Studio editor. Edits specs/<id>.json (the same format build.mjs reads) with a live preview.
-import { captionStyles, captionStyleHints, captionStyle, splitSub, parseSubtitles } from '/lib/captions.mjs';
+import { captionStyles, captionStyleHints, captionStyle, splitSub, parseSubtitles, tokens } from '/lib/captions.mjs';
+import { cutRanges, wordRanges } from '/lib/edit.mjs';
+import { createDemoStudio } from '/ui/demo.js';
+import { silenceCuts, silenceLevels } from '/lib/silence.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { starters, starterSpec } from '/lib/starters.mjs';
+import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
+import { headIns, headOuts, headInOf, headOutOf } from '/lib/headfx.mjs';
+import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -54,10 +60,10 @@ async function loadState() {
   applyState(await api('/api/state'));
 }
 function applyState(s) {
-  Object.assign(S, { workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
+  Object.assign(S, { canTrash: s.canTrash, workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, insets: s.insets, whisper: s.whisper, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
   $('#project-name').textContent = s.workspace?.name || 'Geen project';
   if (!s.workspace) return;
-  Object.assign(S, { list: s.videos, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
+  Object.assign(S, { list: s.videos, clipAudio: s.clipAudio || {}, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
   const sel = $('#video-select');
   sel.replaceChildren(...S.list.map(v => el('option', { value: v.id, 'data-hint': v.overline || '' }, v.id)));
   if (S.id) sel.value = S.id;
@@ -257,6 +263,7 @@ function wirePreviewDom(doc) {
     '.ms-tapmark:not(.near):not(.sel) { opacity: .45; }' +
     '.ms-tapmark.near::before { border-color: #fff; }' +
     '.ms-tapmark.sel::before { border-color: #ffb77d; box-shadow: 0 0 0 6px #ffb77d55, 0 4px 14px #0008; }' +
+    '.ms-tapmark.end::before { border-style: dashed; width: 44px; height: 44px; left: -22px; top: -22px; } .ms-tapmark.end b { left: -22px; top: -22px; width: 44px; height: 44px; }' +
     '.ms-tapmark.drag { cursor: grabbing; } .ms-tapmode #phone { cursor: crosshair; }';
   doc.head.append(style);
   markPreviewSelection(doc);
@@ -396,6 +403,15 @@ function drawTapMarks(doc = $('.pv.front')?.contentDocument) {
     m.style.cssText = `left:${t.x}px;top:${t.y}px`;
     m.innerHTML = `<b>${i + 1}</b><small>${t.t.toFixed(1)}s</small>`;
     layer.append(m);
+    // A swipe also gets a mark where it ends, to drag.
+    if (t.x2 != null) {
+      const e = doc.createElement('div');
+      e.className = `ms-tapmark end${near ? ' near' : ''}${sel ? ' sel' : ''}`;
+      e.dataset.i = i; e.dataset.end = '1';
+      e.style.cssText = `left:${t.x2}px;top:${t.y2 ?? t.y}px`;
+      e.innerHTML = `<b>→</b>`;
+      layer.append(e);
+    }
   });
 }
 function moveTapLive(doc, i, x, y) {
@@ -403,16 +419,18 @@ function moveTapLive(doc, i, x, y) {
 }
 function dragTapMark(doc, mark, e) {
   e.preventDefault(); e.stopPropagation();
-  const i = +mark.dataset.i;
+  const i = +mark.dataset.i, end = mark.dataset.end === '1';
   if (!(S.sel?.kind === 'tap' && S.sel.i === i)) { S.sel = { kind: 'tap', i }; renderInspector(); renderTimeline(); drawTapMarks(doc); }
-  const m = doc.querySelector(`.ms-tapmark[data-i="${i}"]`);
+  const m = doc.querySelector(`.ms-tapmark[data-i="${i}"]${end ? '[data-end]' : ':not([data-end])'}`);
   m.classList.add('drag');
   let pt = null;
-  const move = ev => { pt = devicePoint(doc, ev); moveTapLive(doc, i, ...pt); };
+  const move = ev => { pt = devicePoint(doc, ev); if (end) { m.style.left = `${pt[0]}px`; m.style.top = `${pt[1]}px`; } else moveTapLive(doc, i, ...pt); };
   const up = () => {
     doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', up);
     m.classList.remove('drag');
-    if (pt) commit(v => { v.taps[i].x = pt[0]; v.taps[i].y = pt[1]; }, { quiet: true });
+    // The end of a swipe changes the animation itself, so the preview is rebuilt for it.
+    if (pt) commit(v => { if (end) { v.taps[i].x2 = pt[0]; v.taps[i].y2 = pt[1]; } else { v.taps[i].x = pt[0]; v.taps[i].y = pt[1]; } }, end ? {} : { quiet: true });
+    if (pt && end) renderInspector();
   };
   doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', up);
 }
@@ -478,7 +496,7 @@ function itemRange(kind, it, i) {
     case 'zoom': return [it.t, it.out ?? END()];
     case 'vo': return [it.t, it.t + (it.len || estLen(it.text))];
     case 'sub': return [it.t, it.out];
-    case 'tap': return [it.t - 0.25, it.t + 0.5];
+    case 'tap': return [it.t - 0.25, it.t + 0.5 + tapLength(it)];
     case 'end': return [END(), DUR()];
     case 'audio': return [0, DUR()];
     case 'music': { const m = musicMix(V()); return [m.start, m.start + m.dur]; }
@@ -697,6 +715,7 @@ function renderClips(names, q) {
       media, scrubLine,
       el('span', { class: 'cc-badge cc-len' }, img ? icon('image') : len ? fmtLen(len) : ''),
       used.has(name) ? el('span', { class: 'cc-badge cc-used', title: 'Gebruikt in deze video' }, icon('check')) : null,
+      S.clipAudio?.[name] ? el('b', { class: 'snd', title: 'Deze clip heeft geluid' }, icon('volume_up')) : null,
       bad ? el('b', { class: 'fitw', title: 'Past niet goed in deze layout: er valt veel weg of het wordt flink vergroot. Klik de clip aan voor details.' }, icon('crop')) : null,
       el('span', { class: 'cc-add' }, icon('add')));
     if (!img) {
@@ -778,13 +797,16 @@ function wireMediaDrop() {
   });
 }
 
+// A swipe lasts as long as it takes, a long press as long as it is held.
+const tapLength = t => (t.x2 != null ? +t.dur || 0.4 : 0) + (t.x2 == null && t.hold > 0 ? +t.hold : 0);
+
 // Timeline rows are derived from the spec each render.
 function rows() {
   const v = V(), end = END(), dur = DUR();
   const hs = sortedHeads();
   const R = [];
   R.push({ key: 'head', label: 'Tekst', icon: 'title', items: hs.map((x, k) => ({ kind: 'head', i: x.i, s: x.h.t, e: hs[k + 1]?.h.t ?? end, text: plain(x.h.text), cls: x.h.hook ? 'hook' : '', noResize: true })) });
-  const clipRow = (kind, label) => ({ key: kind, label, icon: 'smartphone', items: (v[kind] || []).map((c, i) => ({ kind, i, s: c.start, e: c.start + c.dur, text: `${c.src.replace(/\.\w+$/, '')}${c.rate && c.rate !== 1 ? ` ×${c.rate}` : ''}`, ic: 'movie' })) });
+  const clipRow = (kind, label) => ({ key: kind, label, icon: 'smartphone', items: (v[kind] || []).map((c, i) => ({ kind, i, s: c.start, e: c.start + c.dur, text: `${c.src.replace(/\.\w+$/, '')}${c.rate && c.rate !== 1 ? ` ×${c.rate}` : ''}`, ic: 'movie', kf: kfStarts(c) })) });
   const devName = { phone: 'Telefoon', dual: 'Telefoon 1', tablet: 'Tablet', browser: 'Browser', full: 'Beeld' }[layoutOf(v)];
   R.push(clipRow('clips', devName));
   if (isDual(v)) R.push(clipRow('clips2', 'Telefoon 2'));
@@ -799,7 +821,7 @@ function rows() {
   R.push({ key: 'chips', label: 'Callouts', icon: 'sell', lanes: Math.max(1, lanes.length), items: chipItems });
   R.push({ key: 'zoom', label: 'Zoom', icon: 'zoom_in', items: v.zooms.map((z, i) => ({ kind: 'zoom', i, s: z.t, e: z.out ?? end, text: `×${z.scale}`, ramp: z.dur })) });
   R.push({ key: 'vo', label: 'Voice-over', icon: 'record_voice_over', items: v.vo.lines.map((l, i) => ({ kind: 'vo', i, s: l.t, e: l.t + (l.len || estLen(l.text)), text: l.text, len: l.len, noResize: true, wave: l.len && v.audio ? { src: v.audio, from: l.t } : null })) });
-  R.push({ key: 'tap', label: 'Tikken', icon: 'touch_app', items: v.taps.map((x, i) => ({ kind: 'tap', i, s: x.t - 0.25, e: x.t + 0.5, text: '', ic: x.style === 'cursor' || (!x.style && layoutOf(v) === 'browser') ? 'arrow_selector_tool' : 'touch_app', noResize: true })) });
+  R.push({ key: 'tap', label: 'Tikken', icon: 'touch_app', items: v.taps.map((x, i) => ({ kind: 'tap', i, s: x.t - 0.25, e: x.t + 0.5 + tapLength(x), text: '', ic: x.x2 != null ? 'swipe' : x.style === 'cursor' || (!x.style && layoutOf(v) === 'browser') ? 'arrow_selector_tool' : 'touch_app', noResize: true })) });
   R.push({ key: 'sub', label: 'Ondertitels', icon: 'subtitles', items: v.subs.map((x, i) => ({ kind: 'sub', i, s: x.t, e: x.out, text: plain(x.text), cls: v.captions?.off ? 'off' : '' })) });
   if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true, wave: { src: v.audio, from: 0 } }] });
   if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m, wave: { src: v.music.src, from: m.media || 0 } }] }); }
@@ -837,6 +859,7 @@ function renderTimeline() {
         title: `${it.text}\n${it.s.toFixed(2)}s → ${it.e.toFixed(2)}s`
       });
       if (it.kind === 'clips' || it.kind === 'clips2') node.append(filmstrip(listOf(it.kind)[it.i], (it.e - it.s) * pps));
+      for (const t of it.kf || []) node.append(el('i', { class: 'kf-dia', style: `left:${t * pps}px` }));
       if (it.ramp) node.append(el('div', { class: 'ramp', style: `width:${it.ramp * pps}px` }));
       if (it.kind === 'vo' && it.len) node.append(el('div', { class: 'len', style: `width:100%` }));
       if (it.wave) node.append(waveform(it.wave.src, it.wave.from, it.e - it.s, (it.e - it.s) * pps));
@@ -1203,6 +1226,10 @@ function renderInspector() {
     el('p', { class: 'hint' }, 'Zet *sterretjes* om woorden heen voor de accentkleur. Blijft staan tot de volgende tekst.'),
     field('Start (s)', it.t, (x, v) => (v.heads[i].t = x), { type: 'number', step: 0.05, min: 0 }),
     check('Hook (grotere tekst, voor de opening)', it.hook, (x, v) => { if (x) v.heads[i].hook = true; else delete v.heads[i].hook; }),
+    el('div', { class: 'field-row' },
+      selectField('Komt binnen', headInOf(it), Object.entries(headIns).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'rise') delete v.heads[i].fxIn; else v.heads[i].fxIn = x; }),
+      selectField('Gaat weg', headOutOf(it), Object.entries(headOuts).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'lift') delete v.heads[i].fxOut; else v.heads[i].fxOut = x; })),
+    el('button', { class: 'ghost', title: 'Gebruik dit binnenkomen en weggaan voor alle teksten', onclick: () => commit(v => { for (const h of v.heads) { const a = v.heads[i]; if (a.fxIn) h.fxIn = a.fxIn; else delete h.fxIn; if (a.fxOut) h.fxOut = a.fxOut; else delete h.fxOut; } }) }, icon('done_all'), 'Voor alle teksten'),
     actions()
   ];
   else if (k === 'clips' || k === 'clips2') content = clipPanel(k, i, it);
@@ -1243,9 +1270,20 @@ function renderInspector() {
     el('p', { class: 'hint' }, 'Sleep het oranje bolletje in de preview, of klik op het apparaat om de tik daarheen te zetten. Met Tik-modus (T) zet elke klik een nieuwe tik op de playhead, ook tijdens het afspelen.'),
     el('button', { class: S.tapMode ? 'primary' : '', onclick: () => { setTapMode(!S.tapMode); renderInspector(); } }, icon('touch_app'), S.tapMode ? 'Tik-modus stoppen' : 'Tik-modus'),
     field('Moment (s)', it.t, (x, v) => (v.taps[i].t = Math.max(0.25, x)), { type: 'number', step: 0.05, min: 0.25 }),
+    selectField('Soort', it.x2 != null ? 'swipe' : it.hold > 0 ? 'hold' : 'tap', [['tap', 'Tik'], ['hold', 'Lang indrukken'], ['swipe', 'Swipe']], (x, v) => {
+      const t = v.taps[i], [, h] = S.devs?.[layoutOf(v)] || [640, 1358];
+      delete t.x2; delete t.y2; delete t.dur; delete t.hold;
+      if (x === 'hold') t.hold = 0.8;
+      if (x === 'swipe') { t.x2 = t.x; t.y2 = Math.round(Math.max(40, t.y - h * 0.3)); t.dur = 0.4; }
+    }),
     el('div', { class: 'field-row' },
-      field('X (px)', it.x, (x, v) => (v.taps[i].x = x), { type: 'number', step: 5 }),
-      field('Y (px)', it.y, (x, v) => (v.taps[i].y = x), { type: 'number', step: 5 })),
+      field(it.x2 != null ? 'Begin X (px)' : 'X (px)', it.x, (x, v) => (v.taps[i].x = x), { type: 'number', step: 5 }),
+      field(it.x2 != null ? 'Begin Y (px)' : 'Y (px)', it.y, (x, v) => (v.taps[i].y = x), { type: 'number', step: 5 })),
+    it.x2 != null ? el('div', { class: 'field-row' },
+      field('Eind X (px)', it.x2, (x, v) => (v.taps[i].x2 = x), { type: 'number', step: 5 }),
+      field('Eind Y (px)', it.y2 ?? it.y, (x, v) => (v.taps[i].y2 = x), { type: 'number', step: 5 })) : null,
+    it.x2 != null ? field('Duur swipe (s)', it.dur ?? 0.4, (x, v) => (v.taps[i].dur = Math.max(0.12, x)), { type: 'number', step: 0.05, min: 0.12, max: 2 }) : null,
+    it.x2 == null && it.hold > 0 ? field('Vasthouden (s)', it.hold, (x, v) => (v.taps[i].hold = Math.max(0.15, x)), { type: 'number', step: 0.1, min: 0.15, max: 5 }) : null,
     selectField('Weergave', it.style || '', [['', layoutOf() === 'browser' ? 'Automatisch (muisaanwijzer)' : 'Automatisch (vinger)'], ['finger', 'Vinger'], ['cursor', 'Muisaanwijzer']], (x, v) => { if (x) v.taps[i].style = x; else delete v.taps[i].style; }),
     el('p', { class: 'hint' }, 'Tip: zet de tik net vóór het moment dat er in de opname iets verandert. Een tik zoomt mee met een zoom.'),
     actions()
@@ -1261,6 +1299,7 @@ function renderInspector() {
   else if (k === 'sub') content = [
     head('subtitles', 'Ondertitel', V().captions?.off ? el('span', { class: 'muted' }, 'verborgen') : null),
     field('Tekst', it.text, (x, v) => (v.subs[i].text = x), { textarea: true, live: true }),
+    wordPicker(i, it),
     el('p', { class: 'hint' }, `*Sterretjes* = accentkleur. De woorden worden over de duur van het blok verdeeld en verschijnen ${captionStyle(brandOf(), V()).words} per keer.`),
     el('div', { class: 'field-row' },
       field('In (s)', it.t, (x, v) => (v.subs[i].t = x), { type: 'number', step: 0.05, min: 0 }),
@@ -1284,7 +1323,7 @@ function renderInspector() {
   if (S.sel && S.sel.kind !== 'brand') box.querySelector('.insp-head')?.append(el('button', { class: 'ghost icon insp-close', title: 'Selectie opheffen (Esc)', onclick: () => select(null) }, icon('close')));
 }
 
-const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen' };
+const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen', text: 'title' };
 function videoPanel() {
   const v = V();
   const brand = brandOf();
@@ -1301,6 +1340,7 @@ function videoPanel() {
     el('label', { class: 'field' }, el('span', {}, 'Layout'),
       el('div', { class: 'layout-grid' }, ...Object.entries(S.layouts).map(([k, label]) =>
         el('button', { class: k === layout ? 'on' : '', title: label, onclick: () => commit(v => { v.layout = k; delete v.dual; if (k === 'dual' && !v.clips2?.length) v.clips2 = clone(v.clips); }) }, icon(LAYOUT_ICONS[k] || 'crop_portrait'), label.split(' (')[0])))),
+    backgroundSection(),
     el('label', { class: 'field' }, el('span', {}, 'Renderen in'),
       el('div', { class: 'fmt-checks' }, ...Object.entries(S.formats || {}).map(([k, f]) => {
         const list = v.formats?.length ? v.formats : ['9:16'];
@@ -1433,6 +1473,22 @@ function musicPanel(it) {
 
 // ---------- captions ----------
 // Style = defaults < brand.captions < video.captions, so a brand can set the house style and a video can deviate.
+// The scenery behind everything, and where it changes during the video.
+function backgroundSection() {
+  const v = V(), cur = bgOf(v.bg), changes = v.bgs || [];
+  const pick = (x, on) => el('button', { class: on ? 'on' : '', title: bgStyles[x].label, onclick: () => commit(v => { if (x === 'orbit') delete v.bg; else v.bg = x; }) }, icon(bgStyles[x].icon), bgStyles[x].label);
+  return el('div', { class: 'field' }, el('span', {}, 'Achtergrond'),
+    el('div', { class: 'layout-grid bg-grid' }, ...Object.keys(bgStyles).map(x => pick(x, x === cur))),
+    ...changes.map((c, j) => el('div', { class: 'field-row bg-change' },
+      field('Wisselt op (s)', c.t, (x, v) => { v.bgs[j].t = x; }, { type: 'number', step: 0.1, min: 0.5 }),
+      selectField('Naar', bgOf(c.style), Object.entries(bgStyles).map(([id, e]) => [id, e.label]), (x, v) => { v.bgs[j].style = x; }),
+      el('button', { class: 'ghost', title: 'Wisseling verwijderen', onclick: () => commit(v => { v.bgs.splice(j, 1); if (!v.bgs.length) delete v.bgs; }) }, icon('close')))),
+    el('button', { class: 'ghost', onclick: () => commit(v => {
+      const last = bgTimeline(v).at(-1).style, next = Object.keys(bgStyles).find(k => k !== last) || 'blur';
+      (v.bgs ||= []).push({ t: Math.max(0.5, +(S.t || 0).toFixed(1)), style: next });
+    }) }, icon('add'), 'Achtergrond laten wisselen'));
+}
+
 function captionsSection() {
   const v = V();
   const lines = v.vo.lines.filter(l => l.text?.trim());
@@ -1445,6 +1501,7 @@ function captionsSection() {
       : 'Nog geen ondertitels. Maak ze uit de voice-over, importeer een .srt/.vtt of voeg losse blokken toe met "Ondertitel".'),
     el('div', { class: 'insp-actions' },
       el('button', { onclick: subsFromVo, disabled: !lines.length, title: lines.length ? '' : 'Voeg eerst VO-zinnen toe' }, icon('record_voice_over'), 'Uit voice-over'),
+      el('button', { onclick: subsFromAudio, disabled: !canHear(), title: canHear() ? 'Luistert het audiospoor of het geluid van de clips af (Whisper, op je eigen computer) en zet elk woord op het juiste moment' : 'Voeg eerst een stem- of audiospoor toe, of zet het geluid van een clip aan' }, icon('hearing'), 'Uit audio'),
       el('label', { class: 'upload' }, icon('upload'), 'Importeer .srt/.vtt', importInput)),
     ...captionStyleFields());
 }
@@ -1510,6 +1567,104 @@ function subsFromVo() {
   const unspoken = lines.filter(l => !l.len).length;
   toast(unspoken ? `Ondertitels gemaakt. ${unspoken} zin(nen) zijn nog niet ingesproken; hun lengte is geschat.` : 'Ondertitels gemaakt uit de voice-over.');
 }
+// Speech recognition: Whisper listens to the audio track and every word gets its exact time. It is installed once,
+// on the user's say-so (a download from GitHub and Hugging Face), then runs offline.
+function askWhisperModel() {
+  const dlg = $('#dlg-whisper'), models = Object.entries(S.whisper?.models || {});
+  $('#whisper-models').replaceChildren(...models.map(([id, m], k) => el('label', { class: 'check' },
+    el('input', { type: 'radio', name: 'whisper-model', value: id, checked: id === (S.whisper.want || 'small') }), `${m.label} · ${m.mb} MB`)));
+  return new Promise(ok => {
+    dlg.addEventListener('close', () => ok(dlg.returnValue === 'ok' ? dlg.querySelector('input:checked')?.value || 'small' : null), { once: true });
+    dlg.showModal();
+  });
+}
+// Something to listen to: the voice/audio track, or a clip that has its sound switched on.
+const soundClips = () => [...(V()?.clips || []), ...(V()?.clips2 || [])].filter(c => c.sound && S.clipAudio?.[c.src]);
+const canHear = () => !!(V()?.audio || soundClips().length);
+
+// The clip's own sound (only for clips that have some): on/off and level, and cutting the silences out of it.
+function soundControls(k, i, c) {
+  if (!S.clipAudio?.[c.src]) return [];
+  const out = [check('Geluid van de clip', c.sound, (x, v) => { if (x) v[k][i].sound = true; else { delete v[k][i].sound; delete v[k][i].vol; } })];
+  if (!c.sound) return out;
+  const level = el('select', {}, ...Object.entries(silenceLevels).map(([id, l]) => el('option', { value: id }, l.label)));
+  level.value = S.silenceLevel || 'normal';
+  level.onchange = () => { S.silenceLevel = level.value; };
+  out.push(
+    slider('Volume', c.vol ?? 1, (x, v) => { if (x === 1) delete v[k][i].vol; else v[k][i].vol = x; }),
+    el('div', { class: 'insp-section' },
+      el('h3', {}, 'Stilte knippen'),
+      el('p', { class: 'hint' }, 'Zoekt de stiltes in deze clip en knipt ze weg (met een klein stukje lucht eromheen). Alles schuift op, op elk spoor. Met Ctrl+Z haal je het terug.'),
+      el('label', { class: 'field' }, el('span', {}, 'Gevoeligheid'), level),
+      el('button', { onclick: () => cutSilence(k, i) }, icon('content_cut'), 'Stilte knippen')));
+  return out;
+}
+async function cutSilence(k, i) {
+  const c = V()[k][i];
+  toast('Stilte opsporen…');
+  let found;
+  try { found = await api(`/api/silences/${encodeURIComponent(c.src)}?level=${S.silenceLevel || 'normal'}`); } catch (e) { return toast(e.message, true); }
+  const cuts = silenceCuts(found.silences, c);
+  if (!cuts.length) return toast('Geen stilte gevonden die lang genoeg is om weg te knippen.');
+  const total = cuts.reduce((s, [a, b]) => s + b - a, 0);
+  const note = V().audio ? ' Let op: het losse stem- of audiospoor wordt niet meegeknipt.' : '';
+  if (!confirm(`${cuts.length} stiltes gevonden, samen ${total.toFixed(1)}s. Weg knippen? De rest van de video schuift op.${note}`)) return;
+  commit(v => { cutRanges(v, cuts); });
+  S.sel = null; S.multi = null; renderAll(); markPreviewSelection();
+  toast(`${total.toFixed(1)}s stilte weggeknipt`);
+}
+
+// The words of a caption block that has exact word times: pick some and cut them (and their time) out of the video.
+function wordPicker(i, sub) {
+  const toks = tokens(sub.text);
+  if (!Array.isArray(sub.wo) || sub.wo.length !== toks.length) return null;
+  if (S.wordSel?.sub !== i || S.wordSel.text !== sub.text) S.wordSel = { sub: i, text: sub.text, set: new Set() };
+  const sel = S.wordSel.set;
+  const go = el('button', { class: 'danger', disabled: !sel.size, onclick: () => cutWords(i) }, icon('content_cut'), 'Knip uit video');
+  const words = toks.map((w, j) => el('button', {
+    class: `word${sel.has(j) ? ' on' : ''}`, title: `${(sub.t + sub.wo[j]).toFixed(2)}s`,
+    onclick: e => { if (sel.has(j)) sel.delete(j); else sel.add(j); e.currentTarget.classList.toggle('on', sel.has(j)); go.disabled = !sel.size; seek(sub.t + sub.wo[j]); }
+  }, w.w));
+  return el('div', { class: 'insp-section' },
+    el('h3', {}, 'Woorden knippen'),
+    el('p', { class: 'hint' }, 'Klik de woorden aan die weg moeten (een stopwoord, een verspreking) en knip ze uit de video: de clips en alles erna schuiven op.'),
+    el('div', { class: 'words' }, ...words),
+    el('div', { class: 'insp-actions' }, go));
+}
+function cutWords(i) {
+  const sub = V().subs[i], sel = S.wordSel?.set;
+  if (!sub || !sel?.size) return;
+  const ranges = wordRanges(sub, sel);
+  const total = ranges.reduce((s, [a, b]) => s + b - a, 0);
+  const note = V().audio ? ' Let op: het losse stem- of audiospoor wordt niet meegeknipt.' : '';
+  if (V().audio && !confirm(`${sel.size} woord(en) uit de video knippen (${total.toFixed(1)}s)?${note}`)) return;
+  commit(v => { cutRanges(v, ranges); });
+  S.wordSel = null; S.sel = null; S.multi = null; renderAll(); markPreviewSelection();
+  toast(`${total.toFixed(1)}s weggeknipt`);
+}
+async function subsFromAudio() {
+  const id = S.id;
+  if (!canHear()) return toast('Voeg eerst een stem- of audiospoor toe, of zet het geluid van een clip aan.');
+  if (S.saveTimer) await flushSave();
+  applyState(await api('/api/state'));
+  if (!S.whisper.cli || !S.whisper.model) {
+    if (!S.whisper.canInstall && !S.whisper.cli) return toast('Whisper is nog niet geïnstalleerd, en Motion Studio kan het alleen op Windows zelf ophalen. Installeer whisper.cpp en zet het pad bij Instellingen.', true);
+    const model = await askWhisperModel();
+    if (!model) return;
+    const inst = await runJob('whisper', 'Whisper installeren', { id: 'install', ic: 'download', body: { model } });
+    if (inst?.state !== 'done') return;
+    applyState(await api('/api/state'));
+    $('#dlg-job').close();
+  }
+  const job = await runJob('transcribe', 'Ondertitels uit audio', { ic: 'hearing', sub: V().audio || 'geluid van de clips' });
+  if (job?.state !== 'done' || S.id !== id) return;
+  const { subs, words } = job.result;
+  const keep = V().subs.length && !confirm(`Klaar: ${subs.length} ondertitels uit ${words} woorden. De ${V().subs.length} bestaande ondertitels vervangen?`);
+  $('#dlg-job').close();
+  if (keep) return;
+  commit(v => { v.subs = subs; });
+  toast(`${subs.length} ondertitels gemaakt uit ${words} woorden, elk woord op zijn eigen moment`);
+}
 const voSubs = lines => lines.map(l => ({ t: l.t, out: round(l.t + (l.len || estLen(l.text))), text: l.text })).sort((a, b) => a.t - b.t);
 
 // S: cut the selected clip or caption at the playhead (or, with nothing splittable selected, whatever is under it).
@@ -1530,6 +1685,15 @@ function splitAtPlayhead() {
     commit(v => {
       const c = v[kind][i], d = round(t - c.start);
       const second = { ...c, start: t, dur: round(c.dur - d) };
+      if (c.kf?.length) {
+        // Both halves keep the motion they had: the split point becomes a keyframe on each side. Keyframe times run
+        // from the end of the transition, which the second half no longer has.
+        const kd = Math.max(0, d - transitionLength(c)), at = kfAt(c.kf, kd), cut = kfList(c.kf);
+        second.kf = [{ t: 0, ...at, ease: 'none' }, ...cut.filter(k => k.t > kd).map(k => ({ ...k, t: round(k.t - kd) }))];
+        const first = cut.filter(k => k.t < kd);
+        if (first.length) first.push({ t: round(kd), ...at, ease: kfDefaultEase });
+        if (first.length) c.kf = first; else delete c.kf;
+      }
       if (!isImage(c.src)) second.media = round((c.media || 0) + d * (c.rate || 1));
       // The split point stays a seamless cut; the transition belongs to the first half.
       delete second.tr; delete second.trDur;
@@ -1816,6 +1980,38 @@ function transitionControls(k, i, c) {
   ];
 }
 
+// Keyframes count from the end of the clip's transition (see src/keyframes.mjs), so the timeline diamonds and the
+// playhead work in that time too.
+const transitionLength = c => { const t = (S.transitions || {})[c.tr]; return t ? Math.min(+c.trDur || t.dur, c.dur) : 0; };
+const kfStarts = c => (c.kf?.length ? kfList(c.kf, c.dur).map(k => k.t + transitionLength(c)) : []);
+
+function keyframeControls(k, i, c) {
+  const start = transitionLength(c);
+  const add = () => {
+    const t = round(Math.max(0, Math.min(S.t - c.start - start, c.dur - start)));
+    const at = kfAt(c.kf, t);
+    commit(v => { const cur = v[k][i]; cur.kf = [...(cur.kf || []), { t, ...at, ease: kfDefaultEase }]; });
+    renderInspector();
+  };
+  const row = (kf, j) => {
+    const set = (prop, label, opts) => field(label, kf[prop] ?? kfFull(kf)[prop], (x, v) => { v[k][i].kf[j][prop] = x; }, { type: 'number', key: `kf${j}${prop}${k}${i}`, ...opts });
+    return el('div', { class: `kf-row${Math.abs(S.t - c.start - start - kf.t) < 0.02 ? ' now' : ''}` },
+      el('div', { class: 'kf-head' },
+        el('button', { class: 'ghost', title: 'Naar dit keyframe', onclick: () => seek(c.start + start + kf.t) }, el('i', { class: 'kf-dia' }), `${(+kf.t).toFixed(2)}s`),
+        el('button', { class: 'ghost', title: 'Keyframe verwijderen', onclick: () => { commit(v => { const cur = v[k][i]; cur.kf.splice(j, 1); if (!cur.kf.length) delete cur.kf; }); renderInspector(); } }, icon('close'))),
+      el('div', { class: 'field-row' }, set('t', 'Tijd (s)', { step: 0.05, min: 0 }), selectField('Beweging naar dit punt', kfEases[kf.ease] ? kf.ease : kfDefaultEase, Object.entries(kfEases).map(([id, e]) => [id, e.label]), (x, v) => { v[k][i].kf[j].ease = x; })),
+      el('div', { class: 'field-row' }, set('x', 'X (px)', { step: 10 }), set('y', 'Y (px)', { step: 10 })),
+      el('div', { class: 'field-row three' }, set('s', 'Schaal', { step: 0.05, min: 0.05 }), set('r', 'Rotatie (°)', { step: 5 }), set('o', 'Dekking', { step: 0.1, min: 0, max: 1 })));
+  };
+  return [el('div', { class: 'insp-section' },
+    el('h3', {}, 'Animatie (keyframes)'),
+    el('p', { class: 'hint' }, 'Zet de playhead in de clip en klik op het knopje: het huidige beeld wordt een keyframe. Verander de waarden, of voeg er verderop nog een toe, en de clip beweegt ertussen. Met een overgang beginnen de keyframes pas als die klaar is.'),
+    ...(c.kf || []).map((kf, j) => [kf, j]).sort((a, b) => a[0].t - b[0].t).map(([kf, j]) => row(kf, j)),
+    el('div', { class: 'insp-actions' },
+      el('button', { onclick: add }, icon('add'), 'Keyframe op de playhead'),
+      c.kf?.length ? el('button', { class: 'ghost', onclick: () => { commit(v => { delete v[k][i].kf; }); renderInspector(); } }, icon('delete_sweep'), 'Alles wissen') : null))];
+}
+
 function clipPanel(k, i, c) {
   if (isImage(c.src)) return [
     head('image', k === 'clips2' ? 'Afbeelding · telefoon 2' : 'Afbeelding'),
@@ -1827,6 +2023,7 @@ function clipPanel(k, i, c) {
       field('Start in video (s)', c.start, (x, v) => (v[k][i].start = x), { type: 'number', step: 0.05, min: 0 }),
       field('Duur (s)', c.dur, (x, v) => (v[k][i].dur = x), { type: 'number', step: 0.05, min: 0.1 })),
     ...transitionControls(k, i, c),
+    ...keyframeControls(k, i, c),
     actions()
   ];
   const rate = c.rate || 1;
@@ -1850,6 +2047,8 @@ function clipPanel(k, i, c) {
       mediaInput,
       field('Snelheid', rate, (x, v) => { if (x === 1) delete v[k][i].rate; else v[k][i].rate = x; }, { type: 'number', step: 0.25, min: 0.25, max: 4 })),
     ...transitionControls(k, i, c),
+    ...soundControls(k, i, c),
+    ...keyframeControls(k, i, c),
     srcDur && used > srcDur + 0.05 ? el('p', { class: 'warn' }, `Let op: de clip loopt ${(used - srcDur).toFixed(1)}s voorbij het einde van de opname (${srcDur.toFixed(1)}s).`) : null,
     actions()
   ];
@@ -1922,7 +2121,7 @@ async function runJob(kind, title, { id = S.id, body, sub = '', ic = 'movie', st
   $('#job-pct').textContent = '0%'; $('#job-step').textContent = ''; $('#job-time').textContent = '';
   $('#job-details').open = false; $('#job-run').hidden = false; $('#job-reveal').hidden = true;
   const stop = $('#job-stop');
-  stop.hidden = kind === 'vo'; stop.disabled = false;
+  stop.hidden = kind === 'vo' || kind === 'whisper'; stop.disabled = false;
   stop.onclick = () => { stop.disabled = true; api(`/api/${kind}/${id}`, { method: 'DELETE' }).catch(() => {}); };
   const chips = steps.map(s => el('span', { class: 'job-chip' }, el('i'), el('span', { class: kind === 'batch' ? 'no-i18n' : '' }, s)));
   $('#job-steps').replaceChildren(...chips);
@@ -2074,6 +2273,7 @@ function buildMenus() {
       { sep: true },
       { label: 'Projecten…', key: 'Ctrl+O', icon: 'folder_open', run: openProjects },
       { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace },
+      { label: 'Demo opnemen…', icon: 'smart_display', run: openDemo, disabled: !S.workspace },
       { label: 'Rendermap openen', key: 'Ctrl+Shift+R', icon: 'folder', run: revealRenders, disabled: !S.workspace },
       { sep: true },
       { label: 'Instellingen…', key: 'Ctrl+,', icon: 'settings', run: openSettings },
@@ -2103,10 +2303,12 @@ function buildMenus() {
       { label: 'Marker op playhead', key: 'M', icon: 'bookmark', run: toggleMarker, disabled: !hasV() },
       { label: 'Tik-modus (klik = tik)', key: 'T', icon: 'ads_click', checked: !!S.tapMode, run: () => setTapMode(!S.tapMode), disabled: !hasV() },
       { sep: true },
+      { label: 'Ondertitels uit audio (Whisper)', icon: 'hearing', run: subsFromAudio, disabled: !hasV() || !canHear() },
       { label: 'Ondertitels uit voice-over', run: subsFromVo, disabled: !hasV() || !V().vo.lines.some(l => l.text?.trim()) },
       { label: 'Ondertitels importeren (.srt / .vtt)…', run: () => pickLocalFile('.srt,.vtt', importSubs), disabled: !hasV() },
       { sep: true },
-      { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace }
+      { label: 'Media uploaden…', icon: 'upload', run: () => $('#upload').click(), disabled: !S.workspace },
+      { label: 'Demo opnemen…', icon: 'smart_display', run: openDemo, disabled: !S.workspace }
     ] },
     { label: 'Beeld', items: () => [
       { header: 'Preview-formaat' },
@@ -2290,11 +2492,28 @@ function openProjects() {
   $('#proj-error').textContent = '';
   $('#proj-create').hidden = true;
   const recents = S.settings.recents || [];
-  $('#recent-list').replaceChildren(...(recents.length ? recents.map(p => el('button', {
-    class: `recent${p === S.workspace?.path ? ' current' : ''}`,
-    onclick: () => switchProject('open', { path: p })
-  }, el('b', {}, p.split(/[\\/]/).filter(Boolean).slice(-2).join(' / ')), el('small', {}, p))) : [el('p', { class: 'hint' }, 'Nog geen recente projecten.')]));
+  $('#recent-list').replaceChildren(...(recents.length ? recents.map(p => el('div', { class: `recent-row${p === S.workspace?.path ? ' current' : ''}` },
+    el('button', { class: 'recent', onclick: () => switchProject('open', { path: p }) },
+      el('b', {}, p.split(/[\\/]/).filter(Boolean).slice(-2).join(' / ')), el('small', {}, p)),
+    el('button', { class: 'ghost icon', title: 'Uit de lijst halen (de map blijft staan)', onclick: () => removeProject(p, false) }, icon('playlist_remove')),
+    S.canTrash ? el('button', { class: 'ghost icon danger', title: 'Project naar de prullenbak', onclick: () => removeProject(p, true) }, icon('delete')) : null)) : [el('p', { class: 'hint' }, 'Nog geen recente projecten.')]));
   if (!dlg.open) dlg.showModal();
+}
+// Off the list of recent projects, or (trash) the whole folder to the recycle bin, so it can still be restored.
+async function removeProject(path, trash) {
+  const name = path.split(/[\\/]/).filter(Boolean).slice(-2).join(' / ');
+  const ok = trash
+    ? confirm(`Het project "${name}" naar de prullenbak verplaatsen?\nAlle video's, clips en renders in die map gaan mee. Je kunt ze terugzetten uit de prullenbak van Windows.`)
+    : confirm(`"${name}" uit de lijst halen?\nDe map en alles erin blijven staan.`);
+  if (!ok) return;
+  const wasOpen = path === S.workspace?.path;
+  try {
+    if (wasOpen && S.saveTimer) await flushSave();
+    applyState(await api('/api/workspace/remove', { method: 'POST', body: JSON.stringify({ path, trash }) }));
+    if (wasOpen) { S.clipDur = {}; if (S.workspace) openFirst(); else showEmpty(); }
+    openProjects();
+    toast(trash ? 'Project naar de prullenbak verplaatst' : 'Uit de lijst gehaald');
+  } catch (e) { $('#proj-error').textContent = e.message; }
 }
 async function switchProject(kind, body) {
   try {
@@ -2313,6 +2532,8 @@ function openSettings() {
   $('#set-python').placeholder = d.python || 'pad naar python.exe';
   $('#set-piper').value = s.piperVoices || '';
   $('#set-piper').placeholder = d.piperVoices || 'map met .onnx stemmen';
+  $('#set-chrome').value = s.chrome || '';
+  $('#set-adb').value = s.adb || '';
   $('#set-downloads').checked = s.copyToDownloads !== false;
   $('#set-lang').value = s.uiLang || 'auto';
   $('#set-detected').textContent = `Nu gebruikt: Python ${d.python || '—'} · Piper-stemmen ${d.piperVoices || '—'}. Laat leeg voor automatisch.`;
@@ -2322,7 +2543,7 @@ async function saveSettings() {
   const langBefore = S.settings.uiLang || 'auto';
   applyState(await api('/api/settings', { method: 'PUT', body: JSON.stringify({
     hyperframes: $('#set-hf').value.trim() || undefined, python: $('#set-python').value.trim(),
-    piperVoices: $('#set-piper').value.trim(), copyToDownloads: $('#set-downloads').checked, uiLang: $('#set-lang').value
+    piperVoices: $('#set-piper').value.trim(), chrome: $('#set-chrome').value.trim(), adb: $('#set-adb').value.trim(), copyToDownloads: $('#set-downloads').checked, uiLang: $('#set-lang').value
   }) }));
   $('#dlg-settings').close();
   // A new interface language comes with the page itself: save the video, then reload.
@@ -2358,6 +2579,13 @@ function wireDialogs() {
       'undo': undo, 'redo': redo, 'play': togglePlay
     })[cmd]?.());
   }
+}
+
+// ---------- demo studio (ui/demo.js) ----------
+let demoStudio = null;
+function openDemo() {
+  demoStudio ??= createDemoStudio({ S, api, el, icon, toast, V, round, commit, renderAll, select, loadState, flushSave, layoutOf: () => (V() ? layoutOf() : 'phone') });
+  return demoStudio.open();
 }
 
 // ---------- resizable panels ----------
@@ -2484,6 +2712,7 @@ function init() {
   $('#btn-redo').onclick = redo;
   $('#btn-render').onclick = renderMp4;
   $('#btn-tapmode').onclick = () => setTapMode(!S.tapMode);
+  $('#btn-demo').onclick = openDemo;
   $('#btn-play').onclick = togglePlay;
   $('#btn-start').onclick = () => seek(0);
   $('#btn-prev').onclick = () => { S.player?.pause(); seek(S.t - 1 / FPS); };

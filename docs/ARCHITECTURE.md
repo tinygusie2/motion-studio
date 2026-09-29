@@ -37,6 +37,10 @@ http://localhost:3400. That's the quickest way to develop the UI.
 - `src/template.mjs`: the composition (HTML, CSS and the GSAP timeline), the layouts, the formats and clip placement.
 - `src/audio.mjs`: the music bed mix (fades, ducking under the voice) as a HyperFrames volume lane. It is shared
   with the UI at `/lib/audio.mjs`.
+- `src/keyframes.mjs`: clip keyframes (easings, interpolation, the GSAP plan). It is shared with the UI at `/lib/keyframes.mjs`.
+- `src/edit.mjs`, `src/silence.mjs`: cutting time out of a video, and finding silences. Shared with the UI at `/lib/edit.mjs` and `/lib/silence.mjs`.
+- `src/demo-session.mjs`, `src/demo-web.mjs`, `src/demo-android.mjs`, `src/cdp.mjs`, `src/gestures.mjs`, `src/demo.mjs`: recording a demo of an app (see below); `ui/demo.js` is its window. `gestures` and `demo` are shared with the UI.
+- `src/whisper.mjs`: finding, installing and running whisper.cpp for speech recognition.
 - `src/captions.mjs`: captions (word timing, grouping, splitting, SRT/VTT). It is shared with the UI at
   `/lib/captions.mjs`.
 - `ui/editor.js`: the editor (timeline, inspector, library, dialogs, keyboard).
@@ -61,13 +65,16 @@ or when the rows change shape.
 
 ## Projects (workspaces)
 
-Every project is a folder. Motion Studio can switch between them (Bestand → Projecten, Ctrl+O).
+Every project is a folder. Motion Studio can switch between them (Bestand → Projecten, Ctrl+O). In that dialog a
+project can be taken off the list (`POST /api/workspace/remove`, the folder stays) or, in the app, moved to the
+recycle bin (`trash: true`, through the `trash` function `main.mjs` passes to `startServer`; only folders with a
+`studio.json`, and the server refuses when it has no such function). The open project gives way to the next one on the list.
 
 | Path | What |
 | --- | --- |
 | `studio.json` | `{ name, defaultBrand }` |
 | `brands/<id>.json` | name, url, lang, `logo` (file in `assets/brand/`), `font` (file in `assets/fonts/`), `theme` colors, `chipColors`, `pills`, `endNameSize`, `renderPrefix`, `css`, `captions` (default caption style) |
-| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
+| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition, `kf` for its keyframes and `sound`/`vol` for its own sound), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
 | `assets/clips/` | screen recordings (converted to H.264 on upload) and screenshots (png/jpg); deleted files go to `.trash/` |
 | `assets/vo/` | audio (voice and music); generated voice-overs land here; deleted files go to `.trash/` |
 | `renders/` | finished MP4s (`<renderPrefix>-<id>[-4x5\|-1x1\|-16x9].mp4`), plus a `.srt` when the video has captions |
@@ -100,6 +107,12 @@ A new app with a different UI usually needs a different frame around the recordi
 
 The editor picks up new layouts automatically. Add an icon for yours in `LAYOUT_ICONS` in `ui/editor.js`.
 
+The `text` layout has no visible device: the device element stays in the page (so clips and their sound keep working) but is `display: none`, and `#root.is-text` centers the headlines, sized to the format (`TS` in `build`). It covers the frame like `full` in `stageFit`, is left out of the Demo Studio's device list, and works in every format.
+
+Headline effects live in `src/headfx.mjs`: a table of GSAP vars per way of coming in (`h.fxIn`) and going out (`h.fxOut`), applied to the words of a headline. `headPlan` gives the page only the effects in use, and headlines whose effect would be cut by the words' clipping mask (scale, blur, fades) get the class `open`. An unknown name falls back to the default (rise / lift).
+
+Background scenery lives in `src/backgrounds.mjs`: `v.bg` is the style the video starts with, `v.bgs = [{ t, style }]` changes it (a crossfade of `bgFade` seconds, times move with cuts). Every style in use is a `.bgl` layer behind everything (the ring scene is the original glow and rings, wrapped in `#bgl-orbit`), with slow GSAP drifts; the page only contains the layers a video uses.
+
 ## Captions
 
 `subs` holds caption blocks `{ t, out, text }` (`*stars*` = accent color). Blocks come from three places: the
@@ -107,6 +120,25 @@ voice-over lines (automatically after the first voice-over, or via "Uit voice-ov
 or blocks added by hand.
 
 Word times inside a block are estimated from word length, so moving a block's in or out point re-times its words.
+A block made by speech recognition also has `wo`: each word's start in seconds after the block's start. Those exact
+times are used while the text still has as many words (fixing a typo keeps them, rewriting the sentence falls back
+to the estimate), they move with the block, and splitting a block splits them too (`timeWords`, `splitSub`).
+
+### Speech recognition
+
+*Captions → Uit audio* (or the Edit menu) runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on the
+video's voice/audio track (`POST /api/transcribe/<id>`, a job like render and voice-over). `src/whisper.mjs` finds
+`whisper-cli` and a model (Settings `whisperCli` / `whisperModelFile` / `whisperModel`, then
+`~/.motion-studio/whisper/`, then PATH). When they are missing the editor asks first and then runs
+`POST /api/whisper/install`: a pinned whisper.cpp release (Windows x64 only; elsewhere install it yourself) and a
+ggml model from Hugging Face, checked against the sha256 Hugging Face publishes. Nothing is downloaded before the
+user agrees, and the audio never leaves the computer.
+
+The server converts the audio to 16 kHz mono with ffmpeg, runs `whisper-cli … -ml 1 -sow -oj` (one word per entry)
+with automatic language detection, and caches the JSON per file version, model and language in `vo/whisper/`.
+`wordsFromWhisper()` and `subsFromWords()` in `src/captions.mjs` turn that into caption blocks (new block after a
+pause, after a sentence end, or when it gets long). The job returns the blocks; the editor puts them in the spec
+with `commit`, so undo works.
 
 The style comes from `captionDefaults` < `brand.captions` < `video.captions`. It covers:
 - `style` (`pop`, `karaoke`, `box`, `plain`)
@@ -157,12 +189,99 @@ enlarged. The ideal source size is twice the screen size.
 
 ## Clip transitions
 
-By default one clip cuts hard to the next. A clip's `tr` (`fade`, `slide`, `whip` or `zoom`, see `transitions` in
+By default one clip cuts hard to the next. A clip's `tr` (`fade`, `slide`, `slideup`, `whip`, `zoom`, `blur`, `flash` or `spin`, see `transitions` in
 `src/template.mjs`) and optional `trDur` (seconds) set how it comes in. The cut stays at the incoming clip's `start`:
 the clip that was showing there (or ended at most 0.1 s before) is held on screen `trDur` seconds longer, by
 extending its `data-duration`, and both animate on the GSAP timeline while they overlap. Clips then stack by their
 start, so the incoming one is on top. Without a clip before it, the clip only animates in over the screen
 background. `clipTransitions()` plans this per device.
+
+## Clip sound and cutting
+
+Uploaded videos keep their sound (AAC). A clip plays it when it has `sound: true` (`vol`, 0..1, is its level): the
+`<video>` then gets `data-has-audio` and no `muted`, and HyperFrames mixes it into the render. Without `sound` a clip
+is silent, as before. `GET /api/state` has `clipAudio` (which clips have a sound track, by ffprobe), and the media
+pool marks them with a speaker.
+
+`src/edit.mjs` cuts time out of the whole video (`cutRanges(v, [[t0, t1], …])`): clips are cut and closed up (a later
+piece of a clip gets its own `media` offset and loses its transition and keyframes), every timed item moves (a moment
+inside a cut lands on its start), caption blocks with exact word times lose exactly the words inside a cut, and `end`
+and `dur` get shorter. The voice/audio track is a file and is not cut. Two things use it:
+- **Cut silence** (clip inspector): `GET /api/silences/<clip>?level=` runs ffmpeg `silencedetect` (cached in
+  `vo/silence/`), `silenceCuts()` in `src/silence.mjs` turns the silences into ranges (only silences over 0.4 s,
+  with 0.12 s of air kept around the words) and the editor cuts them after a confirmation.
+- **Cut words** (caption inspector, for blocks with `wo`): `wordRanges()` gives a word's time range, from its start to
+  the start of the next word.
+
+Both go through `commit`, so Ctrl+Z brings the video back.
+
+Captions can also come from the sound of the clips: without a voice/audio track, `POST /api/transcribe/<id>` mixes
+the sound of the clips that have `sound: true` into one wav in video time. Before recognition, long silences
+(0.6 s and more, `speechSegments()`) are taken out of the audio, because Whisper stretches the first word after a
+silence over it; the word times are mapped back afterwards (`mapFromSegments()`).
+
+## Demo recording (Demo studio)
+
+*Demo* in the media pool (or File → Demo opnemen…) opens `ui/demo.js`: you operate your app on a device in the editor,
+and everything you do is recorded with its time. The app itself runs elsewhere; the editor shows its picture on a
+canvas and forwards pointer, wheel and keyboard events. `src/demo-session.mjs` holds the one open session and the
+HTTP routes (`/api/demo/…`: `open`, `frames` (server-sent events with the live picture), `input`, `fill`, `navigate`,
+`record`, `data`, `devices`, `status`, and `DELETE /api/demo/session`).
+
+Two sources implement the same small interface (`input(ev)`, `fill(dataset, mode)`, `startRecording()`,
+`stopRecording()`, `close()`, and `css` / `dsf` for the picture):
+- **Web** (`src/demo-web.mjs`, `src/cdp.mjs`): a Chrome (installed Chrome or Edge, else the headless Chrome HyperFrames
+  downloads) started with a throwaway profile and driven over the DevTools protocol with Node's own WebSocket. The page
+  gets the CSS size, pixel density and touch input of the layout (`deviceFor`: a phone is 390×844 at 2×, which has the
+  shape of the 616×1334 layout screen). The picture is the screencast; touch events are dispatched as touch (mouse for
+  the browser layout). A recording keeps every screencast frame with its timestamp and `encodeFrames` makes a
+  constant-frame-rate mp4 from them with ffmpeg's concat demuxer.
+- **Android** (`src/demo-android.mjs`): adb. The live picture is an H.264 stream from `screenrecord` (`exec-out`), decoded
+  by ffmpeg into pictures, like Android Studio's mirroring: about 60 fps where screenshots gave 5. A raw H.264 stream only
+  releases a picture when the next one begins, so once the stream has been quiet for 350 ms one `screencap` screenshot is
+  taken to show the newest state (the picture is then a PNG, the stream's are JPEGs; the editor sniffs which). Without a
+  working stream (three starts that give nothing) it falls back to screenshots all the time. A finger on the canvas becomes
+  `input tap` / `input swipe` when it is lifted, and the log gets the gesture at the time the phone did it. The recording
+  is a separate `screenrecord` on the device (its timestamps are exact; the stream is timestamped by when it arrives, which
+  shows changes late), pulled and made constant-frame-rate; if a phone cannot run two encoders the stream pauses during the
+  recording. Text goes through `input text`, fields are found with `uiautomator dump`. It never picks a device: the user
+  chooses one, and the test only runs against a serial named in `MS_TEST_ANDROID`.
+
+The log (`down/move/up/wheel/text` events, seconds since the start) becomes gestures in `src/gestures.mjs`
+(`analyzeGestures`: tap, long press, swipe, scroll (wheel) as a swipe, typing), and `tapsFromGestures` turns those into the
+video's `taps`. A tap with `x2`/`y2`/`dur` is a swipe (the finger drags with a trail) and one with `hold` is a long press
+(`src/template.mjs`). `insetFor(layout, css)` maps the device's CSS pixels into the device element taps are placed in
+(`inset` of the layouts), so a tap lands on the same spot of the screen whatever the layout. The recording is added to the
+video as a clip at the playhead.
+
+Fingers on the phone itself are recorded too (`src/touch.mjs`): while recording, `getevent -lt` (all devices, one process; it takes only a single device path) is read, the touch screens found with `getevent -lp` are parsed, and the first finger becomes down/move/up events in the same css pixels as canvas input. A driver only reports axes that changed, so the parser keeps the last position (seeded from `-lp`). Taps sent by the app use `input` and never pass the touch driver, so nothing is counted twice.
+
+A tap is logged when it is sent, but the screen reacts a moment later (the browser draws a frame; on Android adb starts a
+shell, the phone handles the touch, draws and encodes), and how long differs per phone and connection. So every
+recording is measured (`src/latency.mjs`): ffmpeg's scene score gives the moments the picture changed, and for every tap,
+hold or swipe the time until the first change (within 1.5 s and before the next gesture) is a sample; the median is the
+shift the taps get (`sync`, `syncMeasured` = the number of samples), shown in the review and editable. Only a recording in
+which no tap changed the picture falls back to the source's guess (0 for web, 0.3 s for Android).
+
+**Demo data** (`src/demo.mjs`, kept per project in `demo.json`): datasets of made-up values (`fields`) and app
+storage (`storage`: localStorage, sessionStorage, cookies, set before the app runs). `fieldKind` recognises an input from
+its type, name, id, placeholder, label and autocomplete (Dutch and English, whole words only); `pickValue` gives the
+dataset's value for it. "Vul alle velden in" taps every empty field and types its value, with a human typing rhythm
+(`typingPlan`); the taps and typing land in the recording like anything else. A chip types exactly its value in the
+focused field.
+
+## Clip keyframes
+
+`kf: [{ t, x, y, s, r, o, ease }]` on a clip moves it inside its screen: `x`/`y` shift in screen pixels, `s` scales,
+`r` rotates (degrees) and `o` is the opacity. `t` counts seconds from the clip's start, or from the end of its
+transition when it has one, so a keyframe never fights the transition over the same property. `ease` is how the clip
+gets *to* that keyframe (`kfEases` in `src/keyframes.mjs`; the names are GSAP's). Before the first keyframe the first
+one holds, after the last one the last one holds. Splitting a clip (S) gives both halves a keyframe at the cut.
+
+`kfPlan()` turns the list into a `set` plus one tween per pair; `build()` writes those as `clipKfs` and the script
+plays them after the transitions. `kfAt()` gives the values at a time, which the editor uses for "Keyframe op de
+playhead". Both live in `src/keyframes.mjs`, which is shared with the UI at `/lib/keyframes.mjs`. In the editor
+they show as diamonds on the clip in the timeline and as rows in the clip's inspector.
 
 ## Formats
 

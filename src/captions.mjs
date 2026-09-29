@@ -37,9 +37,15 @@ export function tokens(text) {
 // Longer words take longer to say; punctuation adds a pause after the word.
 const weight = w => Math.max(2, w.replace(/[^\p{L}\p{N}]/gu, '').length) + 1.5 + (/[.!?…]["')]*$/.test(w) ? 4 : /[,;:–-]["')]*$/.test(w) ? 2 : 0);
 
-// Start time of every word in a block.
+// Start time of every word in a block. A block made from speech recognition carries `wo` (each word's start, in
+// seconds after the block's start): those times are used as long as the text still has as many words as `wo` has
+// (so fixing a typo keeps them, rewriting the sentence falls back to the estimate). They move with the block.
 export function timeWords(sub) {
   const toks = tokens(sub.text);
+  if (Array.isArray(sub.wo) && sub.wo.length === toks.length && toks.length) {
+    const last = Math.max(sub.t, sub.out - 0.05);
+    return toks.map((x, i) => ({ ...x, t: +Math.min(sub.t + Math.max(0, +sub.wo[i] || 0), last).toFixed(3) }));
+  }
   const total = toks.reduce((s, x) => s + weight(x.w), 0) || 1;
   const len = Math.max(0.1, sub.out - sub.t);
   let acc = 0;
@@ -74,7 +80,48 @@ export function splitSub(sub, t) {
   const k = ws.findIndex(w => w.t >= t);
   const cut = k < 0 ? Math.max(1, ws.length - 1) : Math.max(1, k);
   const join = list => list.map(x => x.em ? `*${x.w}*` : x.w).join(' ').replace(/\* \*/g, ' ');
-  return [{ ...sub, out: t, text: join(ws.slice(0, cut)) }, { ...sub, t, text: join(ws.slice(cut)) }];
+  const first = { ...sub, out: t, text: join(ws.slice(0, cut)) }, second = { ...sub, t, text: join(ws.slice(cut)) };
+  if (sub.wo?.length === ws.length) {
+    first.wo = sub.wo.slice(0, cut);
+    second.wo = ws.slice(cut).map(w => +Math.max(0, w.t - t).toFixed(3));
+  } else { delete first.wo; delete second.wo; }
+  return [first, second];
+}
+
+// ---------- speech recognition ----------
+// The words of a whisper.cpp JSON transcript (run with `-ml 1 -sow`, so one word per entry) as [{ w, t, e }] in seconds.
+// An entry that doesn't start with a space (a comma, the rest of a word) is glued to the word before it; sound
+// descriptions like [MUSIC] or (laughs) are dropped.
+export function wordsFromWhisper(json) {
+  const out = [];
+  for (const seg of json?.transcription || []) {
+    const raw = String(seg.text ?? '');
+    const text = raw.trim();
+    if (!text || /^[[(♪*].*[\])♪*]$/.test(text) || /^[[(]/.test(text)) continue;
+    const t = (seg.offsets?.from ?? 0) / 1000, e = (seg.offsets?.to ?? 0) / 1000;
+    if (out.length && !/^\s/.test(raw)) { const p = out[out.length - 1]; p.w += text; p.e = Math.max(p.e, e); continue; }
+    out.push({ w: text, t: +t.toFixed(3), e: +Math.max(e, t + 0.05).toFixed(3) });
+  }
+  return out;
+}
+
+// Caption blocks from timed words: a new block after a pause, after a sentence end once there are a few words, and
+// when a block gets too long. Every block keeps its exact word times in `wo`.
+export function subsFromWords(words, { maxWords = 9, maxLen = 4, pause = 0.7 } = {}) {
+  const blocks = [];
+  let cur = [];
+  const flush = () => { if (cur.length) blocks.push(cur); cur = []; };
+  for (const w of words || []) {
+    const prev = cur[cur.length - 1];
+    if (prev && (w.t - prev.e > pause || cur.length >= maxWords || w.e - cur[0].t > maxLen || (cur.length >= 3 && /[.!?…]["')]*$/.test(prev.w)))) flush();
+    cur.push(w);
+  }
+  flush();
+  return blocks.map((b, i) => {
+    const t = b[0].t, next = blocks[i + 1]?.[0].t ?? Infinity;
+    const out = Math.min(b[b.length - 1].e + 0.15, next);
+    return { t: +t.toFixed(3), out: +Math.max(out, t + 0.1).toFixed(3), text: b.map(w => w.w).join(' '), wo: b.map(w => +(w.t - t).toFixed(3)) };
+  });
 }
 
 // ---------- SRT / VTT ----------

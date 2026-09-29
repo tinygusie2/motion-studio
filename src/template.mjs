@@ -3,19 +3,26 @@
 // workspace, so the same template serves different apps.
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
+import { kfPlan } from './keyframes.mjs';
+import { headPlan } from './headfx.mjs';
+import { bgTimeline, bgMarkup, bgCss, bgScript, bgOrbitOpen } from './backgrounds.mjs';
 
 export const W = 1080, H = 1920;
 
 // Device layouts. `enter` is how the device animates in; `screen` is the CSS size of its .screen area
 // (keep in sync with the .L-<name> rules below), used to place cropped/fitted clips and for the editor's fit check.
+// `inset` = [x, y, scale]: where the screen's pixels land in the device element that taps are placed in (a point (sx, sy) of
+// the screen is at (x + sx * scale, y + sy * scale)), so a demo recorded on a screen of `screen` size can place its taps.
 // `box` is the device area in the 1080×1920 stage (both phones for dual, incl. their name tags), used to place the
 // stage in other formats; `dev` is the size of one device element (#phone), in which tap positions are given.
 export const layouts = {
-  phone: { label: 'Telefoon', devices: 1, enter: 'rise', screen: [616, 1334], box: [220, 572, 640, 1358], dev: [640, 1358] },
-  dual: { label: 'Twee telefoons', devices: 2, enter: 'rise', screen: [616, 1334], box: [44, 584, 992, 1122], dev: [461, 978] },
-  tablet: { label: 'Tablet', devices: 1, enter: 'rise', screen: [864, 1176], box: [90, 600, 900, 1212], dev: [900, 1212] },
-  browser: { label: 'Browservenster (desktop)', devices: 1, enter: 'rise', screen: [1000, 636], box: [40, 690, 1000, 700], dev: [1000, 700] },
-  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], box: [0, 0, W, H], dev: [W, H] }
+  phone: { label: 'Telefoon', devices: 1, enter: 'rise', screen: [616, 1334], inset: [12, 12, 1], box: [220, 572, 640, 1358], dev: [640, 1358] },
+  dual: { label: 'Twee telefoons', devices: 2, enter: 'rise', screen: [616, 1334], inset: [8.64, 8.64, 0.72], box: [44, 584, 992, 1122], dev: [461, 978] },
+  tablet: { label: 'Tablet', devices: 1, enter: 'rise', screen: [864, 1176], inset: [18, 18, 1], box: [90, 600, 900, 1212], dev: [900, 1212] },
+  browser: { label: 'Browservenster (desktop)', devices: 1, enter: 'rise', screen: [1000, 636], inset: [0, 64, 1], box: [40, 690, 1000, 700], dev: [1000, 700] },
+  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] },
+  // Only text: no device and no footage on screen, the headlines centered in the frame (in every format).
+  text: { label: 'Alleen tekst (gecentreerd)', devices: 1, enter: 'none', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] }
 };
 
 // Output formats. Everything is designed on the 1080×1920 stage; another format frames that stage differently:
@@ -35,7 +42,7 @@ export const placeIn = (c, fmt) => (formatOf(fmt) !== '9:16' && c.pos?.[formatOf
 export function stageFit(fmt, L) {
   const F = formats[formatOf(fmt)];
   if (!F.area) return null;
-  if (L === 'full') { const s = Math.max(F.w / W, F.h / H); return { s, tx: (F.w - W * s) / 2, ty: (F.h - H * s) / 2 }; }
+  if (L === 'full' || L === 'text') { const s = Math.max(F.w / W, F.h / H); return { s, tx: (F.w - W * s) / 2, ty: (F.h - H * s) / 2 }; }
   const [bx, by, bw, bh] = layouts[L].box, [ax, ay, aw, ah] = F.area;
   const vis = F.peek && L !== 'browser' ? bh * F.peek : bh;
   const s = Math.min(aw / bw, ah / vis);
@@ -79,6 +86,8 @@ function headHtml(text, cls) {
   return `<h1 class="${cls}">${spans.join(' ')}</h1>`;
 }
 
+// A clip's own sound: silent unless the clip has `sound: true`; `vol` (0..1, default 1) is its level.
+const clipSound = c => c.sound ? ` data-has-audio="true"${c.vol != null && c.vol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +c.vol))}"` : ''}` : ' muted';
 const isImage = src => /\.(png|jpe?g|webp|gif)$/i.test(src);
 
 // How a clip sits in a screen of W×H. fit 'cover' fills it (top-aligned, overflow cut off), 'contain' shows all of
@@ -102,7 +111,11 @@ export const transitions = {
   fade: { label: 'Overvloeien', dur: 0.5 },
   slide: { label: 'Schuiven', dur: 0.45 },
   whip: { label: 'Zwiep', dur: 0.3 },
-  zoom: { label: 'Inzoomen', dur: 0.45 }
+  zoom: { label: 'Inzoomen', dur: 0.45 },
+  slideup: { label: 'Omhoog schuiven', dur: 0.45 },
+  blur: { label: 'Wazig overvloeien', dur: 0.5 },
+  flash: { label: 'Flits', dur: 0.35 },
+  spin: { label: 'Draaien', dur: 0.5 }
 };
 
 // Plans the transitions of one clip list. The cut stays where it is (the incoming clip's start); the clip before it
@@ -138,12 +151,15 @@ export function build(v, brand, fmt = '9:16') {
   const chipColors = { ...defaultChipColors, ...(brand.chipColors || {}) };
   const L = v.layout;
   const F = formats[formatOf(fmt)], FW = F.w, FH = F.h, fit = stageFit(fmt, L);
+  const TS = Math.round(Math.min(FW, FH) * 0.105); // headline size of the text-only layout
   // Taps (tap/click markers on the first device, in its own pixels): a finger dot on touch devices, a pointer in the browser.
   const pointer = t => (t.style || (L === 'browser' ? 'cursor' : 'finger')) === 'cursor';
-  const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${pointer(t)
+  const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${t.x2 != null ? '<i class="tap-trail"></i>' : ''}${pointer(t)
     ? '<svg class="tap-cursor" viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 3.1-1.4-2.9-6.5 6.3-.3z"/></svg>'
     : '<i class="tap-dot"></i>'}</div>`).join('');
-  const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
+  const hfx = headPlan(v.heads);
+  const bgt = bgTimeline(v);
+  const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}${hfx.open[i] ? ' open' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
   // With transitions, clips stack by start (the incoming one on top) and a clip that hands over is held longer.
   const plans = { clip: clipTransitions(v.clips), 'clip2-': clipTransitions(L === 'dual' ? v.clips2 : []) };
   const place = (c, z) => { const p = clipPlacement(c, layouts[L].screen), style = p.style + (z ? `${p.style ? ';' : ''}z-index:${z}` : ''); return `class="clip screen-video${p.cls}"${style ? ` style="${style}"` : ''}`; };
@@ -151,8 +167,14 @@ export function build(v, brand, fmt = '9:16') {
     const plan = plans[prefix], z = plan.trs.length ? plan.z[i] : 0, dur = +(c.dur + plan.hold[i]).toFixed(3);
     return isImage(c.src)
       ? `<img id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-track-index="${track + i}" alt="" />`
-      : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}" muted playsinline></video>`;
+      : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}"${clipSound(c)} playsinline></video>`;
   }).join('\n                ');
+  // Keyframes (c.kf) animate a clip after its transition into the screen is done; see src/keyframes.mjs.
+  const clipKfs = [['clip', v.clips], ['clip2-', L === 'dual' ? v.clips2 : []]].flatMap(([prefix, list]) => list.map((c, i) => {
+    const d = plans[prefix].trs.find(t => t.to === i)?.d || 0;
+    const plan = kfPlan(c.kf, +(c.start + d).toFixed(3), Math.max(0, c.dur - d));
+    return plan && { id: `${v.id}-${prefix}${i}`, ...plan };
+  })).filter(Boolean);
   const clipTrs = Object.entries(plans).flatMap(([prefix, p]) => p.trs.map(({ to, from, t, d, type }) => ({ to: `${v.id}-${prefix}${to}`, from: from >= 0 ? `${v.id}-${prefix}${from}` : null, t, d, type })));
   const chrome = L === 'browser' ? `<div class="chrome"><i></i><i></i><i></i><span class="addr"><span class="ms">lock</span>${esc(brand.url || '')}</span></div>` : '';
   const phone = (id, list, prefix, track, tag) => `<div id="${id}" class="phone L-${L}">
@@ -199,17 +221,19 @@ export function build(v, brand, fmt = '9:16') {
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
   const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
-  const enter = layouts[L].enter === 'fade'
+  const enter = layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
     ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out' }, 0.5);`
     : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12 }, 0.75);`;
 
   const script = `
       const tl = gsap.timeline({ paused: true });
       const heads = ${JSON.stringify(v.heads.map(h => h.t))};
+      const HFX = ${JSON.stringify({ list: hfx.list, ins: hfx.ins, outs: hfx.outs })};
       const chips = ${JSON.stringify(v.chips.map(({ t, out, count, suffix }) => ({ t, out, count, suffix })))};
       const zooms = ${JSON.stringify(v.zooms)};
-      const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t) })))};
+      const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t), ...(t.x2 != null && { swipe: true, dx: Math.round(t.x2 - t.x), dy: Math.round((t.y2 ?? t.y) - t.y), dur: Math.max(0.12, +t.dur || 0.4) }), ...(t.hold > 0 && t.x2 == null && { hold: +t.hold }) })))};
       const clipTrs = ${JSON.stringify(clipTrs)};
+      const clipKfs = ${JSON.stringify(clipKfs)};
       const END = ${END};
       const caps = ${JSON.stringify(capGroups.map(g => ({ s: g.s, e: g.e, w: g.words.map(w => w.t), em: g.words.map(w => !!w.em) })))};
       const CAP = ${JSON.stringify({ style: cs.style, color: capColor, hi: capHi, ink: capInk, shadow: capShadow })};
@@ -219,6 +243,7 @@ export function build(v, brand, fmt = '9:16') {
       tl.fromTo('#orbit', { rotation: -8, x: 0 }, { rotation: 14, x: -60, duration: ${DUR}, ease: 'none' }, 0);
       tl.fromTo('#orbit2', { rotation: 10, y: 0 }, { rotation: -12, y: 80, duration: ${DUR}, ease: 'none' }, 0);
       tl.fromTo('#glow', { opacity: 0.55, scale: 1 }, { opacity: 0.9, scale: 1.15, duration: ${DUR}, ease: 'sine.inOut' }, 0);
+      ${bgScript(bgt, DUR)}
 
       // Overline.
       tl.fromTo('#overline', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.1);
@@ -227,9 +252,10 @@ export function build(v, brand, fmt = '9:16') {
       heads.forEach((t, i) => {
         const inner = '#h' + i + ' .wi';
         tl.set('#h' + i, { opacity: 1 }, t);
-        tl.fromTo(inner, { yPercent: 110, rotation: 4 }, { yPercent: 0, rotation: 0, duration: 0.55, ease: 'power4.out', stagger: 0.06 }, t + (i === 0 ? 0.15 : 0));
+        const fx = HFX.list[i], fin = HFX.ins[fx.in], fout = HFX.outs[fx.out];
+        tl.fromTo(inner, fin.from, fin.to, t + (i === 0 ? 0.15 : 0));
         const next = i + 1 < heads.length ? heads[i + 1] : END;
-        tl.to(inner, { yPercent: -110, duration: 0.35, ease: 'power3.in', stagger: 0.025 }, next - 0.32);
+        tl.to(inner, fout.to, next - 0.32);
         tl.set('#h' + i, { opacity: 0 }, next + 0.02);
       });
 
@@ -238,7 +264,7 @@ export function build(v, brand, fmt = '9:16') {
       tl.fromTo('.phone-inner', { y: 0 }, { y: -18, duration: END - 1.8, ease: 'sine.inOut', stagger: 0.4 }, 1.8);
       // Clip transitions: the incoming clip (stacked on top) animates in while the clip it replaces, held on screen
       // for the overlap, animates out, so nothing of it shows through a fitted clip's background afterwards.
-      const SW = ${layouts[L].screen[0]};
+      const SW = ${layouts[L].screen[0]}, SH = ${layouts[L].screen[1]};
       clipTrs.forEach(c => {
         const to = document.getElementById(c.to), from = c.from && document.getElementById(c.from);
         const o = { duration: c.d, immediateRender: false };
@@ -248,6 +274,16 @@ export function build(v, brand, fmt = '9:16') {
         else if (c.type === 'slide') both([{ x: SW }, { x: 0 }], [{ x: 0 }, { x: -SW }], 'power3.inOut');
         else if (c.type === 'whip') both([{ x: SW, filter: 'blur(30px)' }, { x: 0, filter: 'blur(0px)' }], [{ x: 0, filter: 'blur(0px)' }, { x: -SW, filter: 'blur(30px)' }], 'expo.inOut');
         else if (c.type === 'zoom') both([{ opacity: 0, scale: 1.3 }, { opacity: 1, scale: 1 }], [{ opacity: 1, scale: 1 }, { opacity: 0, scale: 0.9 }], 'power3.out');
+        else if (c.type === 'slideup') both([{ y: SH }, { y: 0 }], [{ y: 0 }, { y: -SH }], 'power3.inOut');
+        else if (c.type === 'blur') both([{ opacity: 0, filter: 'blur(40px)' }, { opacity: 1, filter: 'blur(0px)' }], [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(40px)' }], 'power2.out', 'power2.in');
+        else if (c.type === 'flash') both([{ opacity: 0, filter: 'brightness(4)' }, { opacity: 1, filter: 'brightness(1)' }], [{ opacity: 1, filter: 'brightness(1)' }, { opacity: 0, filter: 'brightness(4)' }], 'power2.out', 'power2.in');
+        else if (c.type === 'spin') both([{ opacity: 0, rotation: -25, scale: 0.6 }, { opacity: 1, rotation: 0, scale: 1 }], [{ opacity: 1, rotation: 0, scale: 1 }, { opacity: 0, rotation: 25, scale: 1.3 }], 'power3.out', 'power2.in');
+      });
+      // Keyframes come after the transitions: they start once the transition is over, so they never fight over a property.
+      clipKfs.forEach(k => {
+        const node = document.getElementById(k.id);
+        tl.set(node, k.set, k.setAt);
+        k.segs.forEach(s => tl.fromTo(node, s.from, { ...s.to, duration: s.d, ease: s.ease, immediateRender: false }, s.t));
       });
 
       // Zooms. With a focus point (fx, fy in frame pixels) the device shifts so that point lands mid-screen,
@@ -268,15 +304,31 @@ export function build(v, brand, fmt = '9:16') {
         else tl.to('#top-fade', { opacity: 0, duration: 0.3 }, END - 0.3);
       });
 
-      // Taps: the finger/pointer arrives, presses, a ring spreads out, then it lifts away.
+      // Taps: the finger/pointer arrives and presses, a ring spreads out, then it lifts away. A tap with a hold time stays pressed
+      // that long (and a second ring shows the release); a tap with a way to go (x2, y2) is a swipe: the finger drags along
+      // with a trail behind it.
       taps.forEach((p, i) => {
         const id = '#tap' + i, hand = id + (p.cursor ? ' .tap-cursor' : ' .tap-dot');
         if (p.cursor) tl.fromTo(hand, { opacity: 0, x: 70, y: 90 }, { opacity: 1, x: 0, y: 0, duration: 0.4, ease: 'power3.out', immediateRender: false }, p.t - 0.45);
         else tl.fromTo(hand, { opacity: 0, scale: 1.5 }, { opacity: 1, scale: 1, duration: 0.2, ease: 'power2.out', immediateRender: false }, p.t - 0.22);
         tl.to(hand, { scale: 0.82, duration: 0.09, ease: 'power2.in' }, p.t);
-        tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, p.t + 0.09);
         tl.fromTo(id + ' .tap-ring', { opacity: 0.95, scale: 0.5 }, { opacity: 0, scale: 2.8, duration: 0.6, ease: 'power2.out', immediateRender: false }, p.t);
-        tl.to(hand, { opacity: 0, duration: 0.25, ease: 'power1.in' }, p.t + (p.cursor ? 0.7 : 0.45));
+        let lift = p.t + (p.cursor ? 0.7 : 0.45);
+        if (p.swipe) {
+          const trail = id + ' .tap-trail', go = p.t + 0.09;
+          tl.set(trail, { rotation: Math.atan2(p.dy, p.dx) * 180 / Math.PI, transformOrigin: '0% 50%', width: Math.max(1, Math.hypot(p.dx, p.dy)), opacity: 0 }, 0);
+          tl.fromTo(trail, { scaleX: 0, opacity: 0.85 }, { scaleX: 1, opacity: 0.85, duration: p.dur, ease: 'power2.inOut', immediateRender: false }, go);
+          tl.to(hand, { x: p.dx, y: p.dy, duration: p.dur, ease: 'power2.inOut' }, go);
+          tl.to(trail, { opacity: 0, duration: 0.3, ease: 'power1.in' }, go + p.dur);
+          tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, go + p.dur);
+          lift = go + p.dur + (p.cursor ? 0.3 : 0.2);
+        } else if (p.hold) {
+          const up = p.t + Math.max(0.15, p.hold);
+          tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, up);
+          tl.fromTo(id + ' .tap-ring', { opacity: 0.95, scale: 0.5 }, { opacity: 0, scale: 2.8, duration: 0.6, ease: 'power2.out', immediateRender: false }, up);
+          lift = up + (p.cursor ? 0.5 : 0.3);
+        } else tl.to(hand, { scale: 1, duration: 0.18, ease: 'back.out(3)' }, p.t + 0.09);
+        tl.to(hand, { opacity: 0, duration: 0.25, ease: 'power1.in' }, lift);
       });
 
       // Callout chips pop in and out.
@@ -352,6 +404,7 @@ export function build(v, brand, fmt = '9:16') {
       #glow2 { position: absolute; width: 1200px; height: 1200px; left: -700px; bottom: -380px; border-radius: 50%; background: radial-gradient(circle, ${a(T.glow2, '22')} 0%, transparent 65%); }
       #orbit { position: absolute; width: 1100px; height: 1100px; right: -640px; top: 620px; border: 110px solid ${a(T.orbit, '14')}; border-radius: 50%; }
       #orbit2 { position: absolute; width: 700px; height: 700px; left: -420px; top: 260px; border: 70px solid ${a(T.orbit2, '0d')}; border-radius: 50%; }
+      ${bgCss(T)}
       #grain { position: absolute; inset: 0; background-image: radial-gradient(#ffffff08 1px, transparent 1px); background-size: 6px 6px; opacity: .5; }
 
       /* headline block */
@@ -364,6 +417,7 @@ export function build(v, brand, fmt = '9:16') {
       .head.hook { font-size: 104px; letter-spacing: -4px; }
       .w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 10px; margin-bottom: -10px; }
       .wi { display: inline-block; }
+      .head.open .w { overflow: visible; }
       .em .wi { color: var(--accent); }
 
       /* device: shared */
@@ -405,6 +459,15 @@ export function build(v, brand, fmt = '9:16') {
       .L-full .screen { background: none; }
       .L-full::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(${a(T.bg, 'f0')} 0%, ${a(T.bg, 'b0')} 22%, ${a(T.bg, '00')} 42%, ${a(T.bg, '00')} 70%, ${a(T.bg, '99')} 100%); }
 
+      /* layout: text only. The device stays in the page (clips and their sound keep working) but is not shown. */
+      .L-text { display: none; }
+      #root.is-text #top-fade { display: none; }
+      #root.is-text #top { left: 70px; right: 70px; width: auto; top: 0; height: 100%; }
+      #root.is-text #overline { position: absolute; left: 0; right: 0; top: ${Math.round(FH * 0.08)}px; justify-content: center; }
+      #root.is-text .head { top: 50%; transform: translateY(-50%); text-align: center; font-size: ${TS}px; line-height: 1.02; letter-spacing: ${-Math.round(TS * 0.038)}px; }
+      #root.is-text .head.hook { font-size: ${Math.round(TS * 1.12)}px; letter-spacing: ${-Math.round(TS * 0.04)}px; }
+      #root.is-text #captions { left: 70px; right: 70px; width: auto; }
+
       /* stage: the 1080×1920 design space; other formats scale and move it (see stageFit) */
       #stage { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; transform-origin: 0 0; }
       /* formats */
@@ -426,6 +489,7 @@ export function build(v, brand, fmt = '9:16') {
       .tap-dot, .tap-ring { position: absolute; left: -36px; top: -36px; width: 72px; height: 72px; border-radius: 50%; opacity: 0; }
       .tap-dot { background: #ffffffd9; box-shadow: 0 0 0 7px #ffffff45, 0 12px 30px #0007; }
       .tap-ring { border: 6px solid var(--accent); }
+      .tap-trail { position: absolute; left: 0; top: -8px; height: 16px; border-radius: 8px; opacity: 0; background: linear-gradient(90deg, #ffffff00, #ffffffa6); }
       .tap-cursor { position: absolute; left: -7px; top: -4px; width: 64px; height: 64px; opacity: 0; transform-origin: 7px 4px; filter: drop-shadow(0 6px 10px #0009); }
       .tap-cursor path { fill: #fff; stroke: #111; stroke-width: 1.3; stroke-linejoin: round; }
 
@@ -467,12 +531,9 @@ export function build(v, brand, fmt = '9:16') {
     </style>
   </head>
   <body>
-    <div id="root" class="F-${F.kind || 'tall'}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
-      <div id="glow"></div>
-      <div id="glow2"></div>
-      <div id="orbit"></div>
-      <div id="orbit2"></div>
-      <div id="grain"></div>
+    <div id="root" class="F-${F.kind || 'tall'}${L === 'text' ? ' is-text' : ''}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
+      ${bgOrbitOpen(bgt)}<div id="glow"></div><div id="glow2"></div><div id="orbit"></div><div id="orbit2"></div></div>
+      ${bgMarkup(bgt)}<div id="grain"></div>
 
       <div id="stage" data-scale="${fit?.s ?? 1}"${fit ? ` style="transform:translate(${fit.tx}px,${fit.ty}px) scale(${fit.s})"` : ''}>
       ${phones}

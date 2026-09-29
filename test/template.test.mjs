@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { bgTimeline } from '../src/backgrounds.mjs';
 import { build, layouts, formats, stageFit, clipPlacement, placeIn, clipTransitions, transitions, W, H } from '../src/template.mjs';
 
 const brand = { name: 'MyApp', lang: 'en', theme: {} };
@@ -27,12 +28,14 @@ test('stageFit: 9:16 is the stage itself; other formats put the device box insid
   for (const L of Object.keys(layouts)) assert.equal(stageFit('9:16', L), null);
   for (const [fmt, F] of Object.entries(formats)) {
     if (!F.area) continue;
-    for (const L of Object.keys(layouts).filter(l => l !== 'full')) {
+    for (const L of Object.keys(layouts).filter(l => l !== 'full' && l !== 'text')) {
       const { s, tx } = stageFit(fmt, L), [bx, , bw] = layouts[L].box, [ax, , aw] = F.area;
       assert.ok(tx + bx * s >= ax - 1 && tx + (bx + bw) * s <= ax + aw + 1, `${L} in ${fmt} fits horizontally`);
     }
-    const full = stageFit(fmt, 'full');
-    assert.ok(W * full.s >= F.w - 1 && H * full.s >= F.h - 1, `full screen covers ${fmt}`);
+    for (const L of ['full', 'text']) {
+      const cover = stageFit(fmt, L);
+      assert.ok(W * cover.s >= F.w - 1 && H * cover.s >= F.h - 1, `${L} covers ${fmt}`);
+    }
   }
 });
 
@@ -69,7 +72,7 @@ test('clipTransitions: the clip before a transition is held for the overlap, the
   assert.deepEqual(trs, [{ to: 0, from: 1, t: 3, d: transitions.slide.dur, type: 'slide' }, { to: 2, from: 3, t: 6, d: 0.3, type: 'fade' }]);
   // After a gap there is nothing to hand over from: the clip only animates in. Unknown types are a hard cut.
   assert.deepEqual(clipTransitions([{ start: 0, dur: 1 }, { start: 2, dur: 1, tr: 'whip' }]).trs[0].from, -1);
-  assert.equal(clipTransitions([{ start: 0, dur: 1 }, { start: 1, dur: 1, tr: 'spin' }]).trs.length, 0);
+  assert.equal(clipTransitions([{ start: 0, dur: 1 }, { start: 1, dur: 1, tr: 'nope' }]).trs.length, 0);
 });
 
 test('build: transitions extend the outgoing clip and animate both', () => {
@@ -83,4 +86,57 @@ test('build: transitions extend the outgoing clip and animate both', () => {
   // The second phone's clips only count in the dual layout.
   assert.match(build(video({ clips2: clips }), brand), /const clipTrs = \[\];/);
   assert.match(build(video({ layout: 'dual', clips2: clips }), brand), /"to":"demo-clip2-1","from":"demo-clip2-0"/);
+});
+
+test('build: keyframes animate a clip after its transition, and every transition type builds', () => {
+  const kf = [{ t: 0, s: 1 }, { t: 1, s: 1.4, x: 40, ease: 'power3.out' }];
+  const html = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 3, kf }] }), brand);
+  assert.match(html, /const clipKfs = \[\{"id":"demo-clip0","set":\{[^}]*\},"setAt":0.5,"segs":\[\{"t":0.5,"d":1,/);
+  // With a transition the keyframes start once it is over.
+  const withTr = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr: 'fade', kf }] }), brand);
+  assert.match(withTr, /"id":"demo-clip1","set":\{[^}]*\},"setAt":2,/);
+  assert.match(build(video(), brand), /const clipKfs = \[\];/);
+  for (const tr of Object.keys(transitions)) {
+    const h = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr }] }), brand);
+    assert.match(h, new RegExp(`"type":"${tr}"`));
+    assert.match(h, new RegExp(`c.type === '${tr}'`));
+  }
+});
+
+test('text layout: no device shown, headlines centered, sized to the format', () => {
+  for (const fmt of Object.keys(formats)) {
+    const html = build(video({ layout: 'text' }), brand, fmt);
+    assert.match(html, /class="F-[a-z]+ is-text"/, fmt);
+    assert.ok(html.includes('.L-text { display: none; }'), fmt);
+    assert.match(html, /#root\.is-text \.head \{ top: 50%; transform: translateY\(-50%\); text-align: center; font-size: \d+px/, fmt);
+    assert.ok(!html.includes("tl.fromTo('.phone', { y: 900"), 'the device does not fly in');
+  }
+  assert.ok(!build(video({ layout: 'phone' }), brand, '9:16').includes(' is-text"'));
+});
+
+test('headline effects: default rise and lift, per-headline choices, and an unknown one falls back', () => {
+  const base = build(video(), brand, '9:16');
+  assert.ok(base.includes('"in":"rise","out":"lift"'));
+  assert.ok(!base.includes('class="head hook open"'), 'the mask stays on for the default');
+  const heads = [{ t: 0, text: 'One', fxIn: 'pop', fxOut: 'blur' }, { t: 2, text: 'Two', fxIn: 'nonsense', fxOut: 'shrink' }];
+  const html = build(video({ heads }), brand, '9:16');
+  assert.ok(html.includes('"list":[{"in":"pop","out":"blur"},{"in":"rise","out":"shrink"}]'));
+  assert.ok(html.includes('class="head open"'), 'scale and blur need the mask off');
+  assert.ok(html.includes('"pop":{"from":{"scale":0.4,"opacity":0}'));
+  assert.ok(!html.includes('"drop"'), 'only the effects in use are sent');
+});
+
+test('backgrounds: the video starts with its own style, changes crossfade, unknown styles fall back', () => {
+  assert.deepEqual(bgTimeline({}), [{ t: 0, style: 'orbit' }]);
+  assert.deepEqual(bgTimeline({ bg: 'nonsense' }), [{ t: 0, style: 'orbit' }]);
+  const tl = bgTimeline({ bg: 'blur', bgs: [{ t: 6, style: 'grid' }, { t: 3, style: 'blur' }, { t: 4, style: 'aurora' }, { t: 0, style: 'solid' }] });
+  assert.deepEqual(tl, [{ t: 0, style: 'blur' }, { t: 4, style: 'aurora' }, { t: 6, style: 'grid' }], 'sorted, no change to what already shows, none at 0');
+  const html = build(video({ bg: 'blur', bgs: [{ t: 4, style: 'grid' }] }), brand, '9:16');
+  assert.ok(html.includes('id="bgl-blur" class="bgl" style="opacity:1"'));
+  assert.ok(html.includes('id="bgl-grid" class="bgl" style="opacity:0"'));
+  assert.ok(html.includes('id="bgl-orbit" class="bgl" style="opacity:0"'));
+  assert.ok(html.includes("tl.fromTo('#bgl-grid', { opacity: 0 }"), 'fades in');
+  assert.ok(html.includes("tl.to('#bgl-blur', { opacity: 0"), 'fades out');
+  assert.ok(!html.includes('id="bgl-aurora"'), 'only the styles in use are in the page');
+  assert.ok(build(video(), brand, '9:16').includes('id="bgl-orbit" class="bgl" style="opacity:1"'));
 });

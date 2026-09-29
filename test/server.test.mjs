@@ -41,3 +41,38 @@ test('previews load GSAP from the app, not from a CDN, so they work offline', as
     server.close();
   }
 });
+
+test('projects: taken off the list, or moved to the bin, and the open one gives way to the next', async () => {
+  const { createWorkspace } = await import('../src/workspace.mjs');
+  const { existsSync } = await import('node:fs');
+  const a = join(home, 'proj-a'), b = join(home, 'proj-b'), c = join(home, 'proj-c');
+  for (const [d, n] of [[a, 'A'], [b, 'B'], [c, 'C']]) createWorkspace(d, n);
+  const trashed = [];
+  const { server, url } = await startServer({ port: 0, workspace: a, trash: async p => { trashed.push(p); } });
+  const post = (path, body) => fetch(`${url}/api/workspace/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    for (const d of [b, c, a]) await post('open', { path: d }); // recents: a, c, b
+    let st = await (await post('remove', { path: b })).json();
+    assert.ok(!st.settings.recents.includes(b), 'b is off the list');
+    assert.ok(existsSync(b), 'and its folder is still there');
+    assert.equal(st.canTrash, true);
+    // Removing the open project opens the next one on the list.
+    st = await (await post('remove', { path: a })).json();
+    assert.equal(st.workspace.path, c);
+    // A folder that is not on the list is refused, and so is trashing one that is not a project.
+    assert.equal((await post('remove', { path: join(home, 'elsewhere') })).status, 400);
+    // Trash: the folder goes to the bin through the app's function and leaves the list.
+    st = await (await post('remove', { path: c, trash: true })).json();
+    assert.deepEqual(trashed, [c]);
+    assert.ok(!st.settings.recents.includes(c));
+    assert.notEqual(st.workspace?.path, c);
+  } finally { server.close(); }
+  // Without a trash function (a browser, not the app) trashing is refused and nothing is removed.
+  const again = await startServer({ port: 0, workspace: c });
+  try {
+    await fetch(`${again.url}/api/workspace/open`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: c }) });
+    const r = await fetch(`${again.url}/api/workspace/remove`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: c, trash: true }) });
+    assert.equal(r.status, 400);
+    assert.ok(existsSync(c));
+  } finally { again.server.close(); }
+});
