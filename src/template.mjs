@@ -4,7 +4,7 @@
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
 import { kfPlan } from './keyframes.mjs';
-import { headPlan } from './headfx.mjs';
+import { headPlan, outroOf } from './headfx.mjs';
 import { bgTimeline, bgMarkup, bgCss, bgScript, bgOrbitOpen } from './backgrounds.mjs';
 
 export const W = 1080, H = 1920;
@@ -146,7 +146,7 @@ export function clipTransitions(list) {
 // brand = resolved brand from the workspace: { name, lang, url, logoHtml, pills, theme, chipColors, font, endNameSize, css }
 export function build(v, brand, fmt = '9:16') {
   v = normalize(v);
-  const DUR = v.dur ?? 15, END = v.end ?? 12.6;
+  const OUTRO = outroOf(v), DUR = v.dur ?? 15, END = OUTRO === 'off' ? DUR : Math.min(v.end ?? 12.6, DUR);
   const T = { ...defaultTheme, ...(brand.theme || {}) };
   const chipColors = { ...defaultChipColors, ...(brand.chipColors || {}) };
   const L = v.layout;
@@ -366,16 +366,38 @@ export function build(v, brand, fmt = '9:16') {
         });
       });
 
-      // End card.
-      tl.to('#overline', { opacity: 0, y: -16, duration: 0.3, ease: 'power2.in' }, END - 0.2);
-      tl.to('.phone', { y: 420, scale: 0.8, opacity: 0, duration: 0.6, ease: 'power3.in', stagger: 0.06 }, END - 0.3);
-      tl.fromTo('#endcard', { opacity: 0 }, { opacity: 1, duration: 0.3 }, END);
-      tl.fromTo('#end-logo', { scale: 0.2, rotation: -90 }, { scale: 1, rotation: 0, duration: 0.8, ease: 'back.out(1.6)' }, END + 0.05);
-      tl.fromTo('#end-ring', { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.2, ease: 'expo.out' }, END + 0.1);
-      tl.fromTo('#end-name', { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: 'power4.out' }, END + 0.3);
-      tl.fromTo('#end-tag .wi', { yPercent: 110 }, { yPercent: 0, duration: 0.5, ease: 'power4.out', stagger: 0.05 }, END + 0.5);
-      tl.fromTo('#end-pills .pill', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'back.out(2)', stagger: 0.08 }, END + 0.8);
-      tl.fromTo('#end-url', { opacity: 0 }, { opacity: 1, duration: 0.4 }, END + 1.1);
+      // End card, in the style of v.outro (none when it is off).
+      const OUTRO = '${OUTRO}';
+      if (OUTRO !== 'off') {
+        tl.to('#overline', { opacity: 0, y: -16, duration: 0.3, ease: 'power2.in' }, END - 0.2);
+        if (OUTRO === 'slide') {
+          tl.to('.phone', { y: -${FH}, duration: 0.7, ease: 'power3.in', stagger: 0.05 }, END - 0.4);
+          tl.fromTo('#endcard', { opacity: 1, y: ${FH} }, { y: 0, duration: 0.8, ease: 'power4.out' }, END - 0.1);
+        } else if (OUTRO === 'zoom') {
+          tl.to('.phone', { scale: 2.2, opacity: 0, filter: 'blur(18px)', duration: 0.6, ease: 'power2.in', stagger: 0.04 }, END - 0.3);
+          tl.fromTo('#endcard', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.7, ease: 'expo.out' }, END + 0.1);
+        } else if (OUTRO === 'flash') {
+          tl.fromTo('#end-flash', { opacity: 0 }, { opacity: 1, duration: 0.18, ease: 'power2.in' }, END - 0.18);
+          tl.set('.phone', { opacity: 0 }, END);
+          tl.set('#endcard', { opacity: 1 }, END);
+          tl.to('#end-flash', { opacity: 0, duration: 0.5, ease: 'power2.out' }, END + 0.05);
+        } else {
+          tl.to('.phone', OUTRO === 'minimal' ? { opacity: 0, duration: 0.5, ease: 'power1.in' } : { y: 420, scale: 0.8, opacity: 0, duration: 0.6, ease: 'power3.in', stagger: 0.06 }, END - 0.3);
+          tl.fromTo('#endcard', { opacity: 0 }, { opacity: 1, duration: OUTRO === 'minimal' ? 0.6 : 0.3 }, END);
+        }
+        if (OUTRO === 'minimal') {
+          tl.fromTo('#end-logo', { scale: 0.85, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.8, ease: 'power2.out' }, END + 0.1);
+          tl.fromTo('#end-name', { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: 'power2.out' }, END + 0.35);
+          tl.fromTo('#end-tag', { opacity: 0 }, { opacity: 1, duration: 0.8 }, END + 0.7);
+        } else {
+          tl.fromTo('#end-logo', { scale: 0.2, rotation: -90 }, { scale: 1, rotation: 0, duration: 0.8, ease: 'back.out(1.6)' }, END + 0.05);
+          tl.fromTo('#end-ring', { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.2, ease: 'expo.out' }, END + 0.1);
+          tl.fromTo('#end-name', { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: 'power4.out' }, END + 0.3);
+          tl.fromTo('#end-tag .wi', { yPercent: 110 }, { yPercent: 0, duration: 0.5, ease: 'power4.out', stagger: 0.05 }, END + 0.5);
+          tl.fromTo('#end-pills .pill', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'back.out(2)', stagger: 0.08 }, END + 0.8);
+          tl.fromTo('#end-url', { opacity: 0 }, { opacity: 1, duration: 0.4 }, END + 1.1);
+        }
+      }
 
       window.__timelines['${v.id}'] = tl;`;
 
@@ -526,6 +548,9 @@ export function build(v, brand, fmt = '9:16') {
       .pill .ms { font-size: 38px; }
       .pill.a { background: var(--accent); color: var(--accent-ink); }
       .pill.b { background: #22262d; color: var(--text); border: 2px solid #343945; }
+      #end-flash { position: absolute; inset: 0; background: var(--accent); opacity: 0; z-index: 30; pointer-events: none; }
+      #endcard.O-minimal #end-ring, #endcard.O-minimal #end-pills, #endcard.O-minimal #end-url { display: none; }
+      #endcard.O-minimal #end-logo { box-shadow: none; }
       #end-url { font-size: 34px; font-weight: 650; color: var(--muted); letter-spacing: 1px; }
       ${brand.css || ''}
     </style>
@@ -552,13 +577,14 @@ export function build(v, brand, fmt = '9:16') {
       </div>
 ${voiceTags}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" ${mix.fx ? `data-fx-chain="${esc(JSON.stringify(mix.fx.chain))}" ` : ''}data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }, ...(mix.fx?.lanes || [])] }))}" data-track-index="41"></audio>
 ` : ''}
-      <div id="endcard">
+      ${OUTRO === 'off' ? '' : `      <div id="endcard" class="O-${OUTRO}">
         <div id="end-mark"><div id="end-ring"></div><div id="end-logo">${brand.logoHtml || ''}</div></div>
         <div id="end-name">${esc(brand.name)}</div>
         ${headHtml(v.tagline, '').replace('<h1 class="">', '<div id="end-tag">').replace('</h1>', '</div>')}
         ${pills.length ? `<div id="end-pills">${pills.map(([icon, label], i) => `<span class="pill ${i ? 'b' : 'a'}">${icon ? `<span class="ms">${esc(icon)}</span>` : ''}${esc(label)}</span>`).join('')}</div>` : ''}
         ${brand.url ? `<div id="end-url">${esc(brand.url)}</div>` : ''}
       </div>
+      ${OUTRO === 'flash' ? '<div id="end-flash"></div>' : ''}`}
     </div>
     <script>${script}
     </script>

@@ -6,7 +6,7 @@ import { silenceCuts, silenceLevels } from '/lib/silence.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { starters, starterSpec } from '/lib/starters.mjs';
 import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
-import { headIns, headOuts, headInOf, headOutOf } from '/lib/headfx.mjs';
+import { headIns, headOuts, headInOf, headOutOf, outros, outroOf } from '/lib/headfx.mjs';
 import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
@@ -88,7 +88,7 @@ async function openVideo(id) {
 // ---------- spec helpers ----------
 const V = () => S.spec;
 const DUR = () => V().dur ?? 15;
-const END = () => V().end ?? 12.6;
+const END = () => (outroOf(V()) === 'off' ? DUR() : Math.min(V().end ?? 12.6, DUR()));
 function ensureLists(v = V()) {
   for (const k of ['heads', 'clips', 'chips', 'zooms', 'taps']) v[k] ??= [];
   if (isDual(v)) v.clips2 ??= [];
@@ -100,7 +100,7 @@ const isDual = (v = V()) => layoutOf(v) === 'dual';
 const isImage = src => /\.(png|jpe?g|webp|gif)$/i.test(src || '');
 const brandOf = (v = V()) => S.brands.find(b => b.id === v?.brand) || S.brands.find(b => b.id === S.workspace?.defaultBrand) || S.brands[0] || { id: 'none', name: 'Brand', theme: {} };
 const chipColors = () => ({ ...(S.defaultChipColors || CHIP_COLORS), ...(brandOf().chipColors || {}) });
-const listOf = kind => ({ head: V().heads, clips: V().clips, clips2: V().clips2, chips: V().chips, zoom: V().zooms, vo: V().vo.lines, sub: V().subs, tap: V().taps })[kind];
+const listOf = kind => ({ head: V().heads, clips: V().clips, clips2: V().clips2, chips: V().chips, zoom: V().zooms, vo: V().vo.lines, sub: V().subs, tap: V().taps, bg: V().bgs || [] })[kind];
 
 // Every change goes through commit: snapshot for undo, then save + preview refresh.
 // quiet: the change is already visible in the preview (moved by hand there), so save without rebuilding it.
@@ -469,7 +469,7 @@ function markPreviewSelection(doc = $('.pv.front')?.contentDocument) {
 // ---------- selection ----------
 function selItem() {
   if (!S.sel) return null;
-  if (S.sel.kind === 'end') return V();
+  if (S.sel.kind === 'end' || S.sel.kind === 'bg0') return V();
   if (S.sel.kind === 'audio') return V().audio ? V() : null;
   if (S.sel.kind === 'music') return V().music?.src ? V().music : null;
   return listOf(S.sel.kind)?.[S.sel.i] ?? null;
@@ -497,6 +497,8 @@ function itemRange(kind, it, i) {
     case 'vo': return [it.t, it.t + (it.len || estLen(it.text))];
     case 'sub': return [it.t, it.out];
     case 'tap': return [it.t - 0.25, it.t + 0.5 + tapLength(it)];
+    case 'bg0': return [0, Math.min(DUR(), ...(V().bgs || []).map(x => x.t))];
+    case 'bg': return [it.t, Math.min(DUR(), ...(V().bgs || []).filter(x => x.t > it.t).map(x => x.t))];
     case 'end': return [END(), DUR()];
     case 'audio': return [0, DUR()];
     case 'music': { const m = musicMix(V()); return [m.start, m.start + m.dur]; }
@@ -515,6 +517,11 @@ function add(kind, extra = {}) {
     if (kind === 'zoom') { v.zooms.push({ t, scale: 1.3, y: 160, dur: 0.9, out: round(Math.min(t + 3, END() - 0.5)) }); i = v.zooms.length - 1; }
     if (kind === 'vo') { v.vo.lines.push({ t, text: 'Nieuwe zin voor de voice-over.' }); i = v.vo.lines.length - 1; }
     if (kind === 'tap') { const [w, h] = S.devs?.[layoutOf(v)] || [640, 1358]; v.taps.push({ t: round(Math.max(0.3, t)), x: Math.round(w / 2), y: Math.round(h * 0.45) }); i = v.taps.length - 1; }
+    if (kind === 'bg') {
+      const at = round(Math.max(0.5, Math.min(t, DUR() - 0.5)));
+      const now = bgTimeline(v).filter(x => x.t <= at).at(-1).style;
+      (v.bgs ||= []).push({ t: at, style: Object.keys(bgStyles).find(k => k !== now) || 'blur' }); i = v.bgs.length - 1;
+    }
     if (kind === 'sub') { v.subs.push({ t, out: round(Math.max(t + 0.5, Math.min(t + 2, END()))), text: 'Nieuwe ondertitel' }); i = v.subs.length - 1; }
     if (kind === 'clips' || kind === 'clips2') {
       const list = v[kind] ??= [];
@@ -535,7 +542,7 @@ function removeSel() {
     return toast(`${refs.length} items verwijderd`);
   }
   const { kind, i } = S.sel || {};
-  if (!kind || kind === 'end' || kind === 'brand') return;
+  if (!kind || kind === 'end' || kind === 'bg0' || kind === 'brand') return;
   if (kind === 'audio') commit(v => { delete v.audio; delete v.audioVol; });
   else if (kind === 'music') commit(v => { delete v.music; });
   else commit(v => listOf(kind).splice(i, 1));
@@ -543,7 +550,7 @@ function removeSel() {
 }
 function duplicateSel() {
   const { kind, i } = S.sel || {};
-  if (!kind || ['end', 'brand', 'audio', 'music'].includes(kind)) return;
+  if (!kind || ['end', 'bg0', 'brand', 'audio', 'music'].includes(kind)) return;
   const src = clone(listOf(kind)[i]);
   const [a, b] = itemRange(kind, src, i);
   const shift = round(b - a);
@@ -679,6 +686,30 @@ function setMediaTab(tab) {
   try { localStorage.setItem('ms-media-tab', tab); } catch {}
   renderLibrary();
 }
+// The left sidebar shows one pane at a time, each with the full height: adding items, or the media library.
+function setLibPane(pane) {
+  if (pane !== 'add' && pane !== 'media') pane = 'add';
+  for (const b of document.querySelectorAll('.lib-switch button')) b.classList.toggle('on', b.dataset.lib === pane);
+  for (const p of document.querySelectorAll('.lib-pane')) p.hidden = p.dataset.pane !== pane;
+  try { localStorage.setItem('ms-lib-pane', pane); } catch {}
+}
+function filterAdd() {
+  const q = $('#add-q').value.trim().toLowerCase();
+  let first = null;
+  for (const b of document.querySelectorAll('.add-list button')) {
+    const hit = !q || (b.textContent + ' ' + b.dataset.kw).toLowerCase().includes(q);
+    b.hidden = !hit; b.classList.remove('first');
+    if (hit && !first) first = b;
+  }
+  if (q && first) first.classList.add('first');
+  // A group heading only shows while one of its items does.
+  for (const h of document.querySelectorAll('.add-list h4')) {
+    let n = h.nextElementSibling, any = false;
+    while (n && n.tagName === 'BUTTON') { if (!n.hidden) any = true; n = n.nextElementSibling; }
+    h.hidden = !any;
+  }
+  $('#add-none').hidden = !!first;
+}
 function renderLibrary() {
   const q = ($('#media-q')?.value || '').trim().toLowerCase();
   const match = name => !q || name.toLowerCase().includes(q);
@@ -687,9 +718,16 @@ function renderLibrary() {
     b.classList.toggle('on', b.dataset.tab === tab);
     b.querySelector('b').textContent = (b.dataset.tab === 'clips' ? S.clips : S.audio).length || '';
   }
+  const lib = $('.lib-switch [data-lib="media"] b'); if (lib) lib.textContent = S.clips.length + S.audio.length || '';
+  $('#media-unused').classList.toggle('on', !!S.mediaUnused);
+  $('#media-size').classList.toggle('on', S.mediaBig === true);
+  $('#clip-list').style.setProperty('--thumb', S.mediaBig ? '150px' : '96px');
   $('#clip-list').hidden = tab !== 'clips';
   $('#audio-list').hidden = tab !== 'audio';
-  if (tab === 'clips') renderClips(S.clips.filter(match), q); else renderAudio(S.audio.filter(match), q);
+  // "Unused": only files that are not in this video yet.
+  const inVideo = new Set([...(V()?.clips || []), ...(V()?.clips2 || [])].map(c => c.src).concat([V()?.audio, V()?.music?.src]));
+  const keep = name => match(name) && !(S.mediaUnused && inVideo.has(name));
+  if (tab === 'clips') renderClips(S.clips.filter(keep), q || (S.mediaUnused ? 'ongebruikt' : '')); else renderAudio(S.audio.filter(keep), q || (S.mediaUnused ? 'ongebruikt' : ''));
 }
 function emptyDrop(ic, text) {
   return el('button', { class: 'media-empty', onclick: () => $('#upload').click() }, icon(ic), el('span', {}, text));
@@ -710,14 +748,14 @@ function renderClips(names, q) {
     const scrubLine = el('i', { class: 'scrub' });
     const card = el('button', {
       class: 'clip-card', style: `aspect-ratio:${screen[0]} / ${screen[1]}`,
-      title: `${name}${size ? ` (${size[0]} × ${size[1]})` : ''}\nKlik: op de playhead in het apparaat zetten${dual ? '\nShift+klik: telefoon 2' : ''}\nOf sleep naar de tijdlijn`
+      title: `${name}${size ? ` (${size[0]} × ${size[1]})` : ''}\nKlik: voorbeeld bekijken\nOf sleep direct naar de tijdlijn`
     },
       media, scrubLine,
       el('span', { class: 'cc-badge cc-len' }, img ? icon('image') : len ? fmtLen(len) : ''),
       used.has(name) ? el('span', { class: 'cc-badge cc-used', title: 'Gebruikt in deze video' }, icon('check')) : null,
       S.clipAudio?.[name] ? el('b', { class: 'snd', title: 'Deze clip heeft geluid' }, icon('volume_up')) : null,
       bad ? el('b', { class: 'fitw', title: 'Past niet goed in deze layout: er valt veel weg of het wordt flink vergroot. Klik de clip aan voor details.' }, icon('crop')) : null,
-      el('span', { class: 'cc-add' }, icon('add')));
+      el('span', { class: 'cc-add' }, icon('visibility')));
     if (!img) {
       // Scrub: the pointer's position over the card is the position in the clip.
       card.addEventListener('pointermove', e => {
@@ -729,7 +767,7 @@ function renderClips(names, q) {
       });
       card.addEventListener('pointerleave', () => { card.classList.remove('scrubbing'); media.currentTime = Math.min(1.2, media.duration || 1.2); });
     }
-    card.addEventListener('click', e => add(e.shiftKey && dual ? 'clips2' : 'clips', { src: name }));
+    card.addEventListener('click', () => previewAsset('clip', name));
     const wrap = el('div', { class: `clip-wrap${used.has(name) ? ' used' : ''}`, draggable: true },
       card,
       el('div', { class: 'clip-meta' },
@@ -744,6 +782,46 @@ function renderClips(names, q) {
     wrap.addEventListener('dragend', () => { S.dragMedia = null; clearDropGhost(); });
     return wrap;
   }));
+}
+// A file from the library, big, with its details; only "Toevoegen" puts it in the video. Dragging skips this.
+function previewAsset(kind, name) {
+  S.listening?.audio.pause(); S.listening = null;
+  const v = V(), url = `/assets/${kind === 'clip' ? 'clips' : 'vo'}/${encodeURIComponent(name)}`;
+  const img = kind === 'clip' && isImage(name);
+  const media = kind === 'audio' ? el('audio', { src: url, controls: true, autoplay: true, preload: 'auto' })
+    : img ? el('img', { src: url, alt: '' })
+    : el('video', { src: url, controls: true, autoplay: true, muted: !S.clipAudio?.[name], loop: true, playsInline: true, preload: 'auto' });
+  const info = el('p', { class: 'hint pv-info' });
+  const setInfo = () => {
+    const bits = [name.match(/\.(\w+)$/)?.[1]?.toUpperCase()];
+    const size = kind === 'clip' && clipSize(name, setInfo);
+    if (size) bits.push(`${size[0]} × ${size[1]}`);
+    const len = kind === 'clip' ? S.clipDur[name] : S.audioDur[name];
+    if (len && !img) bits.push(fmtLen(len));
+    if (kind === 'clip' && S.clipAudio?.[name]) bits.push('met geluid');
+    info.textContent = bits.filter(Boolean).join(' · ');
+  };
+  setInfo();
+  const dlg = el('dialog', { class: `asset-preview ${kind}` });
+  const close = () => dlg.close();
+  const act = (label, ic, run, primary) => el('button', { class: primary ? 'primary' : '', onclick: () => { close(); run(); } }, icon(ic), label);
+  const buttons = !v ? [] : kind === 'clip'
+    ? [isDual() ? act('Telefoon 2', 'add', () => add('clips2', { src: name })) : null,
+      act(isDual() ? 'Telefoon 1' : 'Toevoegen', 'add', () => add('clips', { src: name }), true)]
+    : [act('Als stem', 'record_voice_over', () => { commit(v => { v.audio = name; }); select({ kind: 'audio', i: 0 }); }),
+      act('Als muziek', 'queue_music', () => { commit(v => { v.music = { ...(v.music || {}), src: name, media: 0 }; delete v.music.dur; }); select({ kind: 'music', i: 0 }); }, true)];
+  dlg.append(
+    el('div', { class: 'pv-head' }, el('h2', {}, name.replace(/\.\w+$/, '')), el('button', { class: 'ghost icon', title: 'Sluiten (Esc)', onclick: close }, icon('close'))),
+    el('div', { class: 'pv-media' }, kind === 'audio' ? el('span', { class: 'pv-audio-ic' }, icon('graphic_eq')) : null, media),
+    info,
+    el('div', { class: 'pv-actions' },
+      el('span', { class: 'hint' }, v ? 'Komt op de playhead. Tip: sleep een bestand direct naar de tijdlijn om dit venster over te slaan.' : ''),
+      el('button', { onclick: close }, 'Sluiten'), ...buttons.filter(Boolean)));
+  dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
+  dlg.addEventListener('close', () => { media.pause?.(); dlg.remove(); });
+  document.body.append(dlg);
+  dlg.showModal();
+  dlg.querySelector('.pv-actions .primary')?.focus();
 }
 function renderAudio(names, q) {
   const box = $('#audio-list');
@@ -825,7 +903,14 @@ function rows() {
   R.push({ key: 'sub', label: 'Ondertitels', icon: 'subtitles', items: v.subs.map((x, i) => ({ kind: 'sub', i, s: x.t, e: x.out, text: plain(x.text), cls: v.captions?.off ? 'off' : '' })) });
   if (v.audio) R.push({ key: 'audio', label: 'Stem', icon: 'graphic_eq', items: [{ kind: 'audio', i: 0, s: 0, e: dur, text: v.audio + (v.audioVol != null && v.audioVol !== 1 ? ` · ${Math.round(v.audioVol * 100)}%` : ''), noResize: true, noMove: true, wave: { src: v.audio, from: 0 } }] });
   if (v.music?.src) { const m = musicMix(v); R.push({ key: 'music', label: 'Muziek', icon: 'queue_music', items: [{ kind: 'music', i: 0, s: m.start, e: m.start + m.dur, text: v.music.src, ic: 'music_note', env: m, wave: { src: v.music.src, from: m.media || 0 } }] }); }
-  R.push({ key: 'end', label: 'Eindkaart', icon: 'flag', items: [{ kind: 'end', i: 0, s: end, e: dur, text: plain(v.tagline) || tr('Eindkaart') }] });
+  // Background: a block per change, from the change until the next one (or the end of the video).
+  const bgNext = c => Math.min(dur, ...(v.bgs || []).filter(x => x.t > c.t).map(x => x.t));
+  const first = Math.min(dur, ...(v.bgs || []).map(x => x.t)), bg0 = bgOf(v.bg);
+  R.push({ key: 'bg', label: 'Achtergrond', icon: 'wallpaper', items: [{ kind: 'bg0', i: 0, s: 0, e: first, text: tr(bgStyles[bg0].label), ic: bgStyles[bg0].icon, noResize: true, noMove: true }, ...(v.bgs || []).map((c, i) => ({ kind: 'bg', i, s: c.t, e: Math.max(c.t + 0.3, bgNext(c)), text: `→ ${tr(bgStyles[bgOf(c.style)].label)}`, ic: bgStyles[bgOf(c.style)].icon, noResize: true }))] });
+  // Outro off: a small block at the end, so it can still be selected and switched back on.
+  R.push({ key: 'end', label: 'Outro', icon: 'flag', items: [outroOf(v) === 'off'
+    ? { kind: 'end', i: 0, s: Math.max(0, dur - 1.6), e: dur, text: tr('Geen outro'), cls: 'off', noResize: true, noMove: true }
+    : { kind: 'end', i: 0, s: end, e: dur, text: plain(v.tagline) || tr('Eindkaart') }] });
   return R;
 }
 
@@ -1019,6 +1104,7 @@ function startDrag(e, it) {
     switch (it.kind) {
       case 'head': v.heads[it.i].t = Math.max(0, snapMove(o.t + dt)); break;
       case 'tap': v.taps[it.i].t = Math.max(0.25, snap(o.t + dt)); break;
+      case 'bg': v.bgs[it.i].t = Math.max(0.5, snap(o.t + dt)); at = v.bgs[it.i].t; break;
       case 'vo': {
         v.vo.lines[it.i].t = Math.max(0, snapMove(o.t + dt));
         for (const x of voSubsNow) shiftItem(v.subs[x.j], x.o, v.vo.lines[it.i].t - o.t);
@@ -1262,7 +1348,8 @@ function renderInspector() {
     el('p', { class: 'hint' }, it.len ? `Ingesproken lengte: ${it.len.toFixed(2)}s.` : 'Nog niet ingesproken. Klik op "Voice-over maken" om hem te genereren.'),
     // Made before lines kept their spot in the file: the audio stays where it was until it's made again.
     it.len && V().audio && !V().vo.file ? el('p', { class: 'hint warn-text' }, 'Deze voice-over is gemaakt met een oudere versie: het geluid schuift nog niet mee als je de zin verplaatst. Klik één keer op "Voice-over maken" (ingesproken zinnen komen uit de cache, dus dat gaat snel).') : null,
-    el('button', { class: 'primary', onclick: generateVo }, icon('graphic_eq'), 'Voice-over maken'),
+    el('div', { class: 'insp-section' }, el('h3', {}, 'Stem (hele video)'), ...voiceFields(),
+      el('button', { class: 'primary', onclick: generateVo }, icon('graphic_eq'), 'Voice-over maken')),
     actions()
   ];
   else if (k === 'tap') content = [
@@ -1310,8 +1397,30 @@ function renderInspector() {
       el('button', { class: 'danger', onclick: removeSel, title: 'Delete' }, icon('delete'), 'Verwijderen')),
     el('div', { class: 'insp-section' }, el('h3', {}, 'Stijl (hele video)'), ...captionStyleFields())
   ];
+  else if (k === 'bg') content = [
+    head(bgStyles[bgOf(it.style)].icon, 'Achtergrondwissel'),
+    selectField('Wisselt naar', bgOf(it.style), Object.entries(bgStyles).map(([id, e]) => [id, e.label]), (x, v) => { v.bgs[i].style = x; }),
+    field('Wisselt op (s)', it.t, (x, v) => { v.bgs[i].t = Math.max(0.5, x); }, { type: 'number', step: 0.1, min: 0.5 }),
+    el('p', { class: 'hint' }, 'De achtergrond loopt in een vloeiende overgang over naar de nieuwe stijl. Sleep het blok op de tijdlijn om het moment te verschuiven.'),
+    el('div', { class: 'insp-actions' },
+      el('button', { onclick: duplicateSel, title: 'Ctrl+D' }, icon('content_copy'), 'Dupliceren'),
+      el('button', { class: 'danger', onclick: removeSel, title: 'Delete' }, icon('delete'), 'Verwijderen'))
+  ];
+  else if (k === 'bg0') content = [
+    head(bgStyles[bgOf(it.bg)].icon, 'Achtergrond'),
+    el('div', { class: 'layout-grid bg-grid' }, ...Object.keys(bgStyles).map(x => el('button', { class: x === bgOf(it.bg) ? 'on' : '', title: bgStyles[x].label, onclick: () => commit(v => { if (x === 'orbit') delete v.bg; else v.bg = x; }) }, icon(bgStyles[x].icon), bgStyles[x].label))),
+    el('p', { class: 'hint' }, 'De achtergrond waarmee de video begint. Laat hem later wisselen met "Achtergrond" onder Toevoegen: dat zet een wissel op de playhead.'),
+    el('button', { class: 'ghost', onclick: () => add('bg') }, icon('add'), 'Achtergrond laten wisselen')
+  ];
+  else if (k === 'end' && outroOf(it) === 'off') content = [
+    head('flag', 'Outro'),
+    selectField('Outro', outroOf(V()), Object.entries(outros).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'card') delete v.outro; else v.outro = x; }),
+    el('p', { class: 'hint' }, 'Geen eindkaart: alles loopt door tot het einde van de video.'),
+    field('Video eindigt op (s)', DUR(), (x, v) => (v.dur = x), { type: 'number', step: 0.05, min: 1 })
+  ];
   else if (k === 'end') content = [
     head('flag', 'Eindkaart'),
+    selectField('Outro', outroOf(V()), Object.entries(outros).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'card') delete v.outro; else v.outro = x; }),
     field('Slogan', it.tagline, (x, v) => (v.tagline = x), { live: x => liveHead('end-tag', x) }),
     el('p', { class: 'hint' }, '*Sterretjes* = accentkleur.'),
     el('div', { class: 'field-row' },
@@ -1324,11 +1433,18 @@ function renderInspector() {
 }
 
 const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen', text: 'title' };
+// The voice for generated voice-over, shared by every line of the video.
+function voiceFields() {
+  const v = V(), brand = brandOf();
+  const voices = [...KOKORO, ...S.tts.piper.map(p => [p, PIPER_LABELS[p] || p])];
+  const defVoice = v.vo?.voice || (brand.lang === 'nl' && S.tts.piper.length ? S.tts.piper[0] : 'am_michael');
+  return [el('div', { class: 'field-row' },
+    selectField('Stem', defVoice, voices, (x, v) => { v.vo.voice = x; }),
+    field('Snelheid', v.vo?.speed ?? (defVoice.startsWith('nl_') ? 1 : 1.08), (x, v) => { v.vo.speed = x; }, { type: 'number', step: 0.02, min: 0.5, max: 2 }))];
+}
 function videoPanel() {
   const v = V();
   const brand = brandOf();
-  const voices = [...KOKORO, ...S.tts.piper.map(p => [p, PIPER_LABELS[p] || p])];
-  const defVoice = v.vo?.voice || (brand.lang === 'nl' && S.tts.piper.length ? S.tts.piper[0] : 'am_michael');
   const layout = layoutOf();
   return [
     head('movie', v.id),
@@ -1340,7 +1456,6 @@ function videoPanel() {
     el('label', { class: 'field' }, el('span', {}, 'Layout'),
       el('div', { class: 'layout-grid' }, ...Object.entries(S.layouts).map(([k, label]) =>
         el('button', { class: k === layout ? 'on' : '', title: label, onclick: () => commit(v => { v.layout = k; delete v.dual; if (k === 'dual' && !v.clips2?.length) v.clips2 = clone(v.clips); }) }, icon(LAYOUT_ICONS[k] || 'crop_portrait'), label.split(' (')[0])))),
-    backgroundSection(),
     el('label', { class: 'field' }, el('span', {}, 'Renderen in'),
       el('div', { class: 'fmt-checks' }, ...Object.entries(S.formats || {}).map(([k, f]) => {
         const list = v.formats?.length ? v.formats : ['9:16'];
@@ -1353,27 +1468,17 @@ function videoPanel() {
         });
         return el('label', { class: 'check', title: `${f.w} × ${f.h}` }, box, f.label);
       }))),
-    el('p', { class: 'hint' }, 'Render MP4 maakt elk aangevinkt formaat. Bekijk ze met de knoppen boven de preview; tekst en apparaat worden per formaat opnieuw geschikt.'),
-    el('div', { class: 'field-row' },
-      field('Lengte (s)', DUR(), (x, v) => (v.dur = x), { type: 'number', step: 0.1, min: 2 }),
-      field('Eindkaart vanaf (s)', END(), (x, v) => (v.end = x), { type: 'number', step: 0.1, min: 1 })),
-    field('Eindkaart slogan', v.tagline, (x, v) => (v.tagline = x), { live: x => liveHead('end-tag', x) }),
+    field('Lengte (s)', DUR(), (x, v) => (v.dur = x), { type: 'number', step: 0.1, min: 2 }),
     layout === 'dual' ? el('div', { class: 'field-row' },
       field('Naam links', v.names?.[0] ?? 'Alex', (x, v) => { v.names = [x, v.names?.[1] ?? 'Jordan']; }, { live: true }),
       field('Naam rechts', v.names?.[1] ?? 'Jordan', (x, v) => { v.names = [v.names?.[0] ?? 'Alex', x]; }, { live: true })) : null,
     el('div', { class: 'insp-section' },
-      el('h3', {}, 'Audio & voice-over'),
+      el('h3', {}, 'Audio'),
       el('div', { class: 'field-row' },
         selectField('Stem / audiospoor', v.audio || '', [['', 'Geen'], ...S.audio.map(a => [a, a])], (x, v) => { if (x) v.audio = x; else { delete v.audio; delete v.audioVol; } }),
-        selectField('Muziek', v.music?.src || '', [['', 'Geen'], ...S.audio.map(a => [a, a])], (x, v) => { if (x) v.music = { ...(v.music || {}), src: x, media: 0 }; else delete v.music; })),
-      selectField('Stem', defVoice, voices, (x, v) => { v.vo.voice = x; }),
-      field('Snelheid', v.vo?.speed ?? (defVoice.startsWith('nl_') ? 1 : 1.08), (x, v) => { v.vo.speed = x; }, { type: 'number', step: 0.02, min: 0.5, max: 2 }),
-      el('p', { class: 'hint' }, `${v.vo.lines.length} zin(nen) op de Voice-over track. Voeg zinnen toe met "VO-zin", zet ze op de juiste tijd en klik op maken. Het resultaat wordt het audiospoor.`),
-      el('button', { class: 'primary', onclick: generateVo, disabled: !v.vo.lines.length }, icon('graphic_eq'), 'Voice-over maken')),
+        selectField('Muziek', v.music?.src || '', [['', 'Geen'], ...S.audio.map(a => [a, a])], (x, v) => { if (x) v.music = { ...(v.music || {}), src: x, media: 0 }; else delete v.music; }))),
     captionsSection(),
-    el('div', { class: 'insp-section' },
-      el('h3', {}, 'Sneltoetsen'),
-      el('p', { class: 'hint' }, 'Spatie afspelen · ←/→ frame · Shift+←/→ 1 s · Home begin · S splitsen · Del verwijderen · Ctrl+D dupliceren · Ctrl+Z / Ctrl+Shift+Z · Esc deselecteren')),
+    el('p', { class: 'hint' }, 'Klik op een blok in de tijdlijn voor zijn instellingen: achtergrond, outro, voice-over, ondertitelstijl.'),
     el('div', { class: 'insp-actions' }, el('button', { class: 'danger', onclick: () => deleteVideo() }, icon('delete'), 'Video verwijderen'))
   ];
 }
@@ -1425,7 +1530,7 @@ function audioItem(a) {
   };
   const row = el('div', { class: `audio-item${role ? ' used' : ''}${playing ? ' playing' : ''}`, draggable: !!v, title: v ? `${a}\nSleep naar de tijdlijn: muziek vanaf dat punt (op de rij Stem: als stem)` : a },
     play,
-    el('div', { class: 'au-main' },
+    el('div', { class: 'au-main', title: 'Voorbeeld bekijken', onclick: () => previewAsset('audio', a) },
       el('span', { class: 'name' }, a.replace(/\.\w+$/, '')),
       el('span', { class: 'au-sub' }, [len ? fmtLen(len) : '', a.match(/\.(\w+)$/)?.[1]?.toUpperCase()].filter(Boolean).join(' · '))),
     role ? el('i', { class: 'au-role' }, role) : null,
@@ -1473,22 +1578,6 @@ function musicPanel(it) {
 
 // ---------- captions ----------
 // Style = defaults < brand.captions < video.captions, so a brand can set the house style and a video can deviate.
-// The scenery behind everything, and where it changes during the video.
-function backgroundSection() {
-  const v = V(), cur = bgOf(v.bg), changes = v.bgs || [];
-  const pick = (x, on) => el('button', { class: on ? 'on' : '', title: bgStyles[x].label, onclick: () => commit(v => { if (x === 'orbit') delete v.bg; else v.bg = x; }) }, icon(bgStyles[x].icon), bgStyles[x].label);
-  return el('div', { class: 'field' }, el('span', {}, 'Achtergrond'),
-    el('div', { class: 'layout-grid bg-grid' }, ...Object.keys(bgStyles).map(x => pick(x, x === cur))),
-    ...changes.map((c, j) => el('div', { class: 'field-row bg-change' },
-      field('Wisselt op (s)', c.t, (x, v) => { v.bgs[j].t = x; }, { type: 'number', step: 0.1, min: 0.5 }),
-      selectField('Naar', bgOf(c.style), Object.entries(bgStyles).map(([id, e]) => [id, e.label]), (x, v) => { v.bgs[j].style = x; }),
-      el('button', { class: 'ghost', title: 'Wisseling verwijderen', onclick: () => commit(v => { v.bgs.splice(j, 1); if (!v.bgs.length) delete v.bgs; }) }, icon('close')))),
-    el('button', { class: 'ghost', onclick: () => commit(v => {
-      const last = bgTimeline(v).at(-1).style, next = Object.keys(bgStyles).find(k => k !== last) || 'blur';
-      (v.bgs ||= []).push({ t: Math.max(0.5, +(S.t || 0).toFixed(1)), style: next });
-    }) }, icon('add'), 'Achtergrond laten wisselen'));
-}
-
 function captionsSection() {
   const v = V();
   const lines = v.vo.lines.filter(l => l.text?.trim());
@@ -1503,7 +1592,8 @@ function captionsSection() {
       el('button', { onclick: subsFromVo, disabled: !lines.length, title: lines.length ? '' : 'Voeg eerst VO-zinnen toe' }, icon('record_voice_over'), 'Uit voice-over'),
       el('button', { onclick: subsFromAudio, disabled: !canHear(), title: canHear() ? 'Luistert het audiospoor of het geluid van de clips af (Whisper, op je eigen computer) en zet elk woord op het juiste moment' : 'Voeg eerst een stem- of audiospoor toe, of zet het geluid van een clip aan' }, icon('hearing'), 'Uit audio'),
       el('label', { class: 'upload' }, icon('upload'), 'Importeer .srt/.vtt', importInput)),
-    ...captionStyleFields());
+    check('Ondertitels tonen', !v.captions?.off, (x, v) => { v.captions = { ...(v.captions || {}), off: !x }; if (x) delete v.captions.off; }),
+    v.subs.length ? el('p', { class: 'hint' }, 'De stijl van de ondertitels stel je in door een ondertitel op de tijdlijn te selecteren.') : null);
 }
 async function importSubs(f) {
   const subs = parseSubtitles(await f.text());
@@ -2750,6 +2840,16 @@ function init() {
   // Media pool: tabs, search, drops on the timeline.
   S.mediaTab = (() => { try { return localStorage.getItem('ms-media-tab') || 'clips'; } catch { return 'clips'; } })();
   document.querySelectorAll('.media-tabs button').forEach(b => (b.onclick = () => setMediaTab(b.dataset.tab)));
+  document.querySelectorAll('.lib-switch button').forEach(b => (b.onclick = () => setLibPane(b.dataset.lib)));
+  try { S.mediaBig = localStorage.getItem('ms-media-big') === '1'; } catch {}
+  setLibPane((() => { try { return localStorage.getItem('ms-lib-pane'); } catch { return null; } })() || 'add');
+  $('#media-unused').onclick = () => { S.mediaUnused = !S.mediaUnused; renderLibrary(); };
+  $('#media-size').onclick = () => { S.mediaBig = !S.mediaBig; try { localStorage.setItem('ms-media-big', S.mediaBig ? '1' : '0'); } catch {} renderLibrary(); };
+  $('#add-q').addEventListener('input', filterAdd);
+  $('#add-q').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.target.value = ''; filterAdd(); e.target.blur(); }
+    if (e.key === 'Enter') { const b = $('.add-list button:not([hidden])'); if (b) { e.preventDefault(); add(b.dataset.add); } }
+  });
   $('#media-q').addEventListener('input', renderLibrary);
   $('#media-q').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderLibrary(); e.target.blur(); } });
   wireMediaDrop();

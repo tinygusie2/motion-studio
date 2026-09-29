@@ -26,3 +26,15 @@ export function headPlan(heads) {
   const pick = (table, used) => Object.fromEntries([...new Set(used)].map(k => [k, { from: table[k].from, to: table[k].to }]));
   return { list, ins: pick(headIns, list.map(x => x.in)), outs: pick(headOuts, list.map(x => x.out)), open: heads.map(h => !!(headIns[headInOf(h)].open || headOuts[headOutOf(h)].open)) };
 }
+
+// How the video ends (v.outro). 'off' = no end card: the devices stay and everything runs to the end of the video.
+export const outros = {
+  card: { label: 'Eindkaart (standaard)' },
+  minimal: { label: 'Minimaal: logo en naam' },
+  slide: { label: 'Omhoog schuiven' },
+  zoom: { label: 'Inzoomen' },
+  flash: { label: 'Flits in accentkleur' },
+  off: { label: 'Uit (geen outro)' }
+};
+export const outroDefault = 'card';
+export const outroOf = v => (outros[v?.outro] ? v.outro : outroDefault);

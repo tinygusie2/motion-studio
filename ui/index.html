@@ -27,21 +27,30 @@
   </header>
 
   <aside id="library">
-    <section>
-      <h3>Toevoegen</h3>
-      <div class="add-grid">
-        <button data-add="head"><span class="ms">title</span>Tekst</button>
-        <button data-add="chips"><span class="ms">sell</span>Callout</button>
-        <button data-add="zoom"><span class="ms">zoom_in</span>Zoom</button>
-        <button data-add="vo"><span class="ms">record_voice_over</span>VO-zin</button>
-        <button data-add="sub"><span class="ms">subtitles</span>Ondertitel</button>
-        <button data-add="tap"><span class="ms">touch_app</span>Tik</button>
+    <nav class="lib-switch" role="tablist">
+      <button data-lib="add" role="tab"><span class="ms">add_circle</span>Toevoegen</button>
+      <button data-lib="media" role="tab"><span class="ms">perm_media</span>Media<b></b></button>
+    </nav>
+    <section class="lib-pane add-pane" data-pane="add">
+      <label class="media-search"><span class="ms">search</span><input id="add-q" type="search" placeholder="Zoek een item" /></label>
+      <div class="add-list">
+        <h4>Tekst</h4>
+        <button data-add="head" data-kw="headline kop titel hook text"><span class="ms">title</span><span class="ai-text"><b>Tekst</b><small>Grote kop in beeld</small></span></button>
+        <button data-add="chips" data-kw="chip label badge teller"><span class="ms">sell</span><span class="ai-text"><b>Callout</b><small>Label met icoon dat inpopt</small></span></button>
+        <button data-add="sub" data-kw="caption srt tekst subtitle"><span class="ms">subtitles</span><span class="ai-text"><b>Ondertitel</b><small>Losse ondertitelregel</small></span></button>
+        <h4>Beeld</h4>
+        <button data-add="zoom" data-kw="camera punch in vergroten"><span class="ms">zoom_in</span><span class="ai-text"><b>Zoom</b><small>Inzoomen op een deel van het scherm</small></span></button>
+        <button data-add="tap" data-kw="klik swipe touch cursor vinger"><span class="ms">touch_app</span><span class="ai-text"><b>Tik</b><small>Vinger of cursor die tikt of swipet</small></span></button>
+        <button data-add="bg" data-kw="background scenery kleur decor"><span class="ms">wallpaper</span><span class="ai-text"><b>Achtergrond</b><small>Wissel naar een andere achtergrond</small></span></button>
+        <h4>Geluid</h4>
+        <button data-add="vo" data-kw="voice-over stem spraak tts"><span class="ms">record_voice_over</span><span class="ai-text"><b>VO-zin</b><small>Zin voor de gegenereerde voice-over</small></span></button>
+        <p class="hint media-none" id="add-none" hidden>Niets gevonden</p>
       </div>
+      <p class="hint media-foot">Een item komt op de playhead. Enter voegt het eerste zoekresultaat toe.</p>
     </section>
-    <section class="grow media">
+    <section class="lib-pane media" data-pane="media" hidden>
       <div class="row-between">
-        <h3>Media</h3>
-        <span class="media-actions">
+          <span class="media-actions">
           <button id="btn-demo" class="upload" title="Bedien je app hier en neem het op, met elke tik en swipe"><span class="ms">smart_display</span>Demo</button>
           <label class="upload" title="Schermopnames (mp4, mov, webm), screenshots (png, jpg) of audio (wav, mp3)">
             <span class="ms">upload</span>Upload
@@ -53,10 +62,14 @@
         <button data-tab="clips" role="tab"><span class="ms">movie</span>Clips<b></b></button>
         <button data-tab="audio" role="tab"><span class="ms">graphic_eq</span>Audio<b></b></button>
       </div>
-      <label class="media-search"><span class="ms">search</span><input id="media-q" type="search" placeholder="Zoeken" /></label>
+      <div class="media-tools">
+        <label class="media-search"><span class="ms">search</span><input id="media-q" type="search" placeholder="Zoeken" /></label>
+        <button id="media-unused" class="ghost icon" title="Alleen wat nog niet in deze video zit"><span class="ms">filter_alt</span></button>
+        <button id="media-size" class="ghost icon" title="Grotere of kleinere voorbeelden"><span class="ms">photo_size_select_large</span></button>
+      </div>
       <div id="clip-list"></div>
       <div id="audio-list" hidden></div>
-      <p class="hint media-foot">Klik om op de playhead te zetten, of sleep naar de tijdlijn. Nieuwe bestanden kun je overal in het venster neerzetten.</p>
+      <p class="hint media-foot">Klik voor een voorbeeld, of sleep direct naar de tijdlijn. Nieuwe bestanden kun je overal in het venster neerzetten.</p>
     </section>
   </aside>
 
