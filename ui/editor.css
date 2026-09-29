@@ -10,7 +10,7 @@
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--text); font: 14px/1.35 'Google Sans Flex', system-ui, sans-serif;
-  display: grid; grid-template-columns: 250px minmax(0, 1fr) 330px; grid-template-rows: 54px minmax(0, 1fr) 290px;
+  display: grid; grid-template-columns: var(--lib-w, 250px) minmax(0, 1fr) var(--insp-w, 330px); grid-template-rows: 54px minmax(0, 1fr) var(--tl-h, 290px);
   overflow: hidden;
 }
 .ms { font-family: 'Material Symbols Rounded'; font-weight: 500; font-size: 20px; line-height: 1; display: inline-block; font-variation-settings: 'FILL' 0; user-select: none; }
@@ -458,7 +458,7 @@ button.tapmode.on { background: var(--orange); color: #3a2108; border-color: var
 .media-empty .ms { font-size: 28px; color: var(--accent); opacity: .8; }
 .media-empty:hover { border-color: var(--accent); color: var(--text); background: #b8c7ff0a; }
 
-#clip-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+#clip-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px 8px; }
 .clip-wrap { position: relative; min-width: 0; }
 .clip-wrap[draggable="true"] { cursor: grab; }
 .clip-card { position: relative; width: 100%; padding: 0; display: block; overflow: hidden; border-radius: 10px; border: 1px solid var(--line2); background: #000; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
@@ -512,3 +512,16 @@ body.tl-scrubbing, body.tl-scrubbing * { cursor: ew-resize !important; user-sele
 #tl-playhead span::after { content: ""; position: absolute; inset: -6px -6px -4px; }
 
 .tl-item .wave { position: absolute; left: 0; top: 50%; height: 26px; width: 100%; transform: translateY(-50%); opacity: .45; pointer-events: none; }
+/* resizable panels: thin grab strips on the edges between the panels */
+.gutter { position: fixed; z-index: 20; touch-action: none; outline: none; }
+.gutter::after { content: ""; position: absolute; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.gutter:hover::after, .gutter.on::after, .gutter:focus-visible::after { opacity: .7; transition-delay: .08s; }
+.gutter.col { top: 54px; bottom: var(--tl-h, 290px); width: 9px; cursor: col-resize; }
+.gutter.col::after { top: 0; bottom: 0; left: 3px; width: 3px; }
+.gutter.lib { left: calc(var(--lib-w, 250px) - 5px); }
+.gutter.insp { right: calc(var(--insp-w, 330px) - 4px); }
+.gutter.row { left: 0; right: 0; bottom: calc(var(--tl-h, 290px) - 5px); height: 9px; cursor: row-resize; }
+.gutter.row::after { left: 0; right: 0; top: 3px; height: 3px; }
+body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-select: none; }
+body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-select: none; }
+body.resizing-col iframe, body.resizing-row iframe { pointer-events: none; }
