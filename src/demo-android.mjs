@@ -1,6 +1,8 @@
-// Demo source: an Android phone or emulator over adb. The live picture is a series of screenshots (`screencap`), taps and
-// swipes go back through `adb shell input`, and fields are found with `uiautomator dump`. The recording is made by
-// `screenrecord` on the device itself (so its timestamps are exact, unlike a stream) and pulled when it stops.
+// Demo source: an Android phone or emulator over adb. The live picture is an H.264 stream from `screenrecord`, decoded by
+// ffmpeg (smooth, like Android Studio's mirroring, also over wifi); a screenshot is taken when the stream goes quiet,
+// because a raw H.264 stream only releases a picture when the next one begins. Taps and swipes go back through
+// `adb shell input`, and fields are found with `uiautomator dump`. The recording is made by `screenrecord` on the device
+// itself (so its timestamps are exact, unlike a stream) and pulled when it stops.
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -62,6 +64,24 @@ export function escapeInputText(ch) {
 }
 export const canTypeOverAdb = ch => ch.charCodeAt(0) < 127 && ch.charCodeAt(0) >= 32;
 
+// Splits a stream of concatenated JPEGs (ffmpeg's mjpeg on a pipe) into pictures. Feed it chunks; it calls `onFrame(buffer)`.
+// A picture is complete when the next one starts.
+export function createJpegSplitter(onFrame) {
+  let buf = Buffer.alloc(0);
+  const soi = (b, from) => { for (let i = from; i + 2 < b.length; i++) if (b[i] === 0xff && b[i + 1] === 0xd8 && b[i + 2] === 0xff) return i; return -1; };
+  return chunk => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      const first = soi(buf, 0);
+      if (first < 0) { buf = buf.subarray(Math.max(0, buf.length - 2)); return; } // the start of a picture may be cut in two chunks
+      const next = soi(buf, first + 3);
+      if (next < 0) { buf = first ? buf.subarray(first) : buf; return; }
+      onFrame(buf.subarray(first, next));
+      buf = buf.subarray(next);
+    }
+  };
+}
+
 // ---------- adb calls ----------
 const adbRun = (adb, run, serial, args, opts) => run(adb, ['-s', serial, ...args], opts);
 export async function listAndroidDevices(adb, run) {
@@ -76,6 +96,7 @@ export class AndroidDemo {
   constructor(o, hooks) {
     Object.assign(this, o); this.onFrame = hooks?.onFrame; this.onNav = hooks?.onNav;
     this.rec = null; this.last = null; this.g = null; this.closed = false; this.url = ''; this.hotUntil = 0; this.shotProc = null;
+    this.stream = null; this.lastLive = 0; this.dirty = false; this.streamFails = 0; this.streamOff = false;
   }
 
   static async open({ adb, serial, run }, hooks = {}) {
@@ -88,7 +109,8 @@ export class AndroidDemo {
     if (!size) throw new Error('Kon de schermgrootte niet lezen.');
     const css = [ANDROID_CSS_WIDTH, Math.round(ANDROID_CSS_WIDTH * size[1] / size[0])];
     const d = new AndroidDemo({ adb, serial, run, size, css, dsf: size[0] / css[0], k: size[0] / css[0], name: state.name }, hooks);
-    d.hotUntil = Date.now() + 3000;
+    d.hotUntil = Date.now() + 3000; d.dirty = true; // a still screen needs one screenshot to show at all
+    d.startStream();
     d.watch();
     return d;
   }
@@ -106,16 +128,50 @@ export class AndroidDemo {
       p.on('close', () => { clearTimeout(timer); const buf = Buffer.concat(parts); buf.length > 100 && buf[0] === 0x89 ? ok(buf) : fail(new Error('Geen schermafbeelding ontvangen.')); });
     });
   }
-  // Keeps the picture fresh: quickly while something is happening (a recording, or just after input), slowly otherwise.
+  // The screen as H.264 from `screenrecord` (it stops after its time limit; a new one follows), decoded to pictures.
+  startStream() {
+    if (this.closed || this.streamOff || this.stream) return;
+    const adb = spawn(this.adb, ['-s', this.serial, 'exec-out', 'screenrecord', '--output-format=h264', '--bit-rate', '5000000', '--time-limit', '175', '-'], { windowsHide: true });
+    const dec = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-flags', 'low_delay', '-probesize', '65536', '-analyzeduration', '0', '-f', 'h264', '-i', 'pipe:0', '-vf', 'scale=540:-2', '-fps_mode', 'passthrough', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', '5', '-flush_packets', '1', 'pipe:1'], { windowsHide: true });
+    const stream = { adb, dec, started: Date.now(), frames: 0 };
+    this.stream = stream; this.dirty = true; // and a new stream starts with a picture the decoder still holds
+    for (const p of [adb, dec]) p.on('error', () => {});
+    dec.stdin.on('error', () => {}); dec.stderr.on('data', () => {}); adb.stderr.on('data', () => {});
+    adb.stdout.on('data', c => { if (!dec.stdin.destroyed) dec.stdin.write(c); });
+    adb.stdout.on('end', () => { try { dec.stdin.end(); } catch {} });
+    dec.stdout.on('data', createJpegSplitter(jpg => {
+      stream.frames++; this.lastLive = Date.now(); this.dirty = true;
+      const b64 = Buffer.from(jpg).toString('base64');
+      this.last = { data: b64, ts: this.lastLive / 1000 };
+      this.onFrame?.(b64, this.last.ts);
+    }));
+    dec.on('close', () => {
+      try { adb.kill(); } catch {}
+      if (this.stream === stream) this.stream = null;
+      if (this.closed || this.streamOff || stream.stopped) return;
+      // A stream that gave nothing and stopped at once does not work on this device: fall back to screenshots.
+      if (stream.frames === 0 && Date.now() - stream.started < 4000) { if (++this.streamFails >= 3) { this.streamOff = true; return; } } else this.streamFails = 0;
+      setTimeout(() => this.startStream(), 200);
+    });
+  }
+  stopStream() { const s = this.stream; this.stream = null; if (s) { s.stopped = true; try { s.adb.kill(); } catch {} try { s.dec.kill(); } catch {} } }
+
+  // Keeps the picture right. With a stream it only adds a screenshot once the stream has gone quiet (the newest picture
+  // is still inside the decoder); without one (a device where the stream does not work, or while it is paused) it
+  // takes screenshots all the time: quickly while something is happening, slowly otherwise.
   async watch() {
     let previous = null, failures = 0;
     while (!this.closed) {
-      try {
-        const png = await this.screenshot();
-        failures = 0;
-        if (!previous || !previous.equals(png)) { previous = png; const b64 = png.toString('base64'); this.last = { data: b64, ts: Date.now() / 1000 }; this.onFrame?.(b64, this.last.ts); }
-      } catch (e) { if (++failures > 6) { this.closed = true; this.error = e; return; } }
-      await sleep(this.rec || Date.now() < this.hotUntil ? 30 : 700);
+      const streaming = !!this.stream && !this.streamOff;
+      const settle = streaming && this.dirty && Date.now() - this.lastLive > 350;
+      if (!streaming || settle) {
+        try {
+          const png = await this.screenshot();
+          failures = 0; this.dirty = false;
+          if (!previous || !previous.equals(png)) { previous = png; const b64 = png.toString('base64'); this.last = { data: b64, ts: Date.now() / 1000 }; this.onFrame?.(b64, this.last.ts); }
+        } catch (e) { if (++failures > 6) { this.closed = true; this.error = e; return; } }
+      }
+      await sleep(streaming ? 120 : this.rec || Date.now() < this.hotUntil ? 30 : 700);
     }
   }
 
@@ -128,7 +184,7 @@ export class AndroidDemo {
   // The log gets the gesture at the time the phone did it, not when the finger went down.
   async input(ev) {
     const { x = 0, y = 0 } = ev;
-    this.hotUntil = Date.now() + 3000;
+    this.hotUntil = Date.now() + 3000; this.dirty = true;
     if (ev.type === 'down') this.g = { t: Date.now(), x, y, lx: x, ly: y };
     else if (ev.type === 'move' && this.g) { this.g.lx = x; this.g.ly = y; }
     else if (ev.type === 'up' && this.g) {
@@ -206,7 +262,7 @@ export class AndroidDemo {
 
   // ---- recording ----
   // `screenrecord` writes an mp4 on the device with the real time of every frame. Its start is when that file appears.
-  async startRecording() {
+  async startRecording(retry = false) {
     if (this.rec) throw new Error('Er wordt al opgenomen.');
     const dir = join(tmpdir(), `ms-demo-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
@@ -224,7 +280,13 @@ export class AndroidDemo {
       if (ls.includes(remote) && !/No such file/i.test(ls)) { this.rec.t0 = Date.now(); break; }
       await sleep(60);
     }
-    if (!this.rec.t0) { const why = err.trim() || 'de opname op het apparaat startte niet'; this.discard(this.rec); this.rec = null; throw new Error(`Kon niet opnemen: ${why}`); }
+    if (!this.rec.t0) {
+      const why = err.trim() || 'de opname op het apparaat startte niet';
+      this.discard(this.rec); this.rec = null;
+      // Some phones cannot run two encoders at once: without the live stream (screenshots take over) there is one.
+      if (this.stream && !retry) { this.stopStream(); this.streamPaused = true; return this.startRecording(true); }
+      throw new Error(`Kon niet opnemen: ${why}`);
+    }
     return this.rec.t0;
   }
   async stopRecording() {
@@ -232,12 +294,14 @@ export class AndroidDemo {
     if (!rec) throw new Error('Er wordt niet opgenomen.');
     const t1 = Date.now();
     this.rec = null;
+    this.stopStream(); // the stream is a screenrecord too: the SIGINT below must reach only the recording
     await this.shell('kill -2 $(pidof screenrecord)').catch(() => {}); // SIGINT: screenrecord finishes the file properly
     await Promise.race([rec.proc.exit, sleep(6000)]);
     const raw = join(rec.dir, 'device.mp4'), out = join(rec.dir, 'rec.mp4');
     await adbRun(this.adb, this.run, this.serial, ['pull', rec.remote, raw]);
     await this.shell('rm', rec.remote).catch(() => {});
     if (!existsSync(raw) || statSync(raw).size < 100) throw new Error('De opname kon niet van het apparaat gehaald worden.');
+    this.streamPaused = false; this.startStream();
     // Constant frame rate, even sizes, and the last picture held until the moment the recording stopped.
     const want = (t1 - rec.t0) / 1000, have = mediaSeconds(raw), pad = Math.max(0, want - have);
     await this.run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', raw, '-vf', `fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2${pad > 0.05 ? `,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)}` : ''}`, '-t', want.toFixed(3), '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]);
@@ -249,6 +313,7 @@ export class AndroidDemo {
 
   async close() {
     this.closed = true;
+    this.stopStream();
     try { this.shotProc?.kill(); } catch {}
     if (this.rec) {
       const rec = this.rec; this.rec = null;

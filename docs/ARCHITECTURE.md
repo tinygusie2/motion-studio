@@ -230,12 +230,16 @@ Two sources implement the same small interface (`input(ev)`, `fill(dataset, mode
   shape of the 616×1334 layout screen). The picture is the screencast; touch events are dispatched as touch (mouse for
   the browser layout). A recording keeps every screencast frame with its timestamp and `encodeFrames` makes a
   constant-frame-rate mp4 from them with ffmpeg's concat demuxer.
-- **Android** (`src/demo-android.mjs`): adb. The live picture is a stream of `screencap` screenshots (fast while
-  something happens, one a second otherwise); a finger on the canvas becomes `input tap` / `input swipe` when it is
-  lifted, and the log gets the gesture at the time the phone did it. The recording is `screenrecord` on the device (its
-  timestamps are exact; a stream piped through ffmpeg is timestamped by when it arrives, which shows changes late), pulled
-  and made constant-frame-rate. Text goes through `input text`, fields are found with `uiautomator dump`. It never picks a
-  device: the user chooses one, and the test only runs against a serial named in `MS_TEST_ANDROID`.
+- **Android** (`src/demo-android.mjs`): adb. The live picture is an H.264 stream from `screenrecord` (`exec-out`), decoded
+  by ffmpeg into pictures, like Android Studio's mirroring: about 60 fps where screenshots gave 5. A raw H.264 stream only
+  releases a picture when the next one begins, so once the stream has been quiet for 350 ms one `screencap` screenshot is
+  taken to show the newest state (the picture is then a PNG, the stream's are JPEGs; the editor sniffs which). Without a
+  working stream (three starts that give nothing) it falls back to screenshots all the time. A finger on the canvas becomes
+  `input tap` / `input swipe` when it is lifted, and the log gets the gesture at the time the phone did it. The recording
+  is a separate `screenrecord` on the device (its timestamps are exact; the stream is timestamped by when it arrives, which
+  shows changes late), pulled and made constant-frame-rate; if a phone cannot run two encoders the stream pauses during the
+  recording. Text goes through `input text`, fields are found with `uiautomator dump`. It never picks a device: the user
+  chooses one, and the test only runs against a serial named in `MS_TEST_ANDROID`.
 
 The log (`down/move/up/wheel/text` events, seconds since the start) becomes gestures in `src/gestures.mjs`
 (`analyzeGestures`: tap, long press, swipe, scroll (wheel) as a swipe, typing), and `tapsFromGestures` turns those into the

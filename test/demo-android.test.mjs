@@ -67,3 +67,18 @@ test('escapeInputText: what `adb shell input text` needs', () => {
   assert.equal(canTypeOverAdb('é'), false);
   assert.equal(canTypeOverAdb('\n'), false);
 });
+
+test('createJpegSplitter: cuts a stream of JPEGs into pictures, whatever the chunking', async () => {
+  const { createJpegSplitter } = await import('../src/demo-android.mjs');
+  const jpeg = n => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20, n), Buffer.from([0xff, 0xd9])]);
+  const stream = Buffer.concat([jpeg(1), jpeg(2), jpeg(3)]);
+  for (const size of [1, 3, 7, 26, 1000]) {
+    const got = [];
+    const feed = createJpegSplitter(f => got.push(Buffer.from(f)));
+    for (let i = 0; i < stream.length; i += size) feed(stream.subarray(i, i + size));
+    // A picture is complete when the next one starts: the last one of the three is still waiting.
+    assert.equal(got.length, 2, `chunks of ${size}`);
+    assert.deepEqual(got[0], jpeg(1));
+    assert.deepEqual(got[1], jpeg(2));
+  }
+});
