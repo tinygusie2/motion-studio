@@ -108,7 +108,9 @@ kbd { background: var(--panel2); border: 1px solid var(--line2); border-radius: 
 #tl-head { display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 #tl-head .hint { margin: 0; }
 #tl-zoom { width: 140px; }
-#tl-scroll { flex: 1; overflow: auto; position: relative; }
+#tl-scroll { flex: 1; overflow: auto; position: relative; scrollbar-width: none; }
+#tl-scroll::-webkit-scrollbar { display: none; }
+#tl-scroll.panning, #tl-scroll.panning * { cursor: grabbing !important; }
 #tl-inner { position: relative; min-width: 100%; }
 #tl-ruler { position: sticky; top: 0; z-index: 6; height: 26px; background: var(--panel); border-bottom: 1px solid var(--line); margin-left: var(--tl-label); cursor: ew-resize; }
 #tl-ruler .tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line2); font-size: 10px; color: var(--muted); padding: 2px 0 0 4px; font-variant-numeric: tabular-nums; }
@@ -508,3 +510,5 @@ button.tapmode.on { background: var(--orange); color: #3a2108; border-color: var
 body.tl-scrubbing, body.tl-scrubbing * { cursor: ew-resize !important; user-select: none; }
 #tl-playhead span { pointer-events: auto; cursor: ew-resize; }
 #tl-playhead span::after { content: ""; position: absolute; inset: -6px -6px -4px; }
+
+.tl-item .wave { position: absolute; left: 0; top: 50%; height: 26px; width: 100%; transform: translateY(-50%); opacity: .45; pointer-events: none; }
