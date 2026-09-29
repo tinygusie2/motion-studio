@@ -6,6 +6,7 @@ import { findChrome, launchBrowser } from './cdp.mjs';
 import { WebDemo, encodeFrames } from './demo-web.mjs';
 import { AndroidDemo, findAdb, listAndroidDevices } from './demo-android.mjs';
 import { analyzeGestures } from './gestures.mjs';
+import { sceneChanges, estimateDelay } from './latency.mjs';
 import { defaultDatasets } from './demo.mjs';
 import { layouts } from './template.mjs';
 
@@ -106,8 +107,15 @@ export function createDemoManager({ getWorkspace, getSettings, run }) {
       if (rec.file) { copyFileSync(rec.file, tmp); dur = rec.dur; } else dur = await encodeFrames(rec, tmp, run);
       renameSync(tmp, out);
     } catch (e) { rmSync(tmp, { force: true }); throw e; } finally { s.discard?.(rec); }
-    const css = info.css;
-    return { clip: name, dur, css, layout: info.layout, source: info.source, sync: rec.sync || 0, gestures: analyzeGestures(rec.events, css), events: rec.events.length, size: statSync(out).size };
+    const css = info.css, gestures = analyzeGestures(rec.events, css);
+    // How long the screen took to react to a tap: measured in the recording itself, since it differs per phone and
+    // per connection. Without a tap that changed the picture, the source's own guess is all there is.
+    let sync = rec.sync || 0, measured = 0;
+    try {
+      const est = estimateDelay(gestures, await sceneChanges(out, run));
+      if (est.delay != null) { sync = est.delay; measured = est.samples.length; }
+    } catch { /* the guess stays */ }
+    return { clip: name, dur, css, layout: info.layout, source: info.source, sync, syncMeasured: measured, gestures, events: rec.events.length, size: statSync(out).size };
   }
 
   // ---- HTTP ----

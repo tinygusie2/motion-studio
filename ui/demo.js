@@ -363,7 +363,9 @@ export function createDemoStudio(ctx) {
       el('p', { class: 'demo-summary' }, `${r.dur.toFixed(1)} s · ${summary || 'geen gebaren'}`),
       el('label', { class: 'check' }, useTaps, 'Tikken en swipes meenemen als animatie'),
       el('label', { class: 'field' }, el('span', {}, 'Tikken later (+) of eerder (−), in seconden'), shift),
-      el('p', { class: 'hint' }, r.source === 'android' ? 'Bij Android loopt het beeld een fractie achter op de tik. Speel de opname af en pas dit aan tot de tik precies valt als het scherm reageert.' : 'De tikken zitten op de tijd waarop je ze deed. Meestal hoef je hier niets aan te passen.'),
+      r.syncMeasured
+        ? el('p', { class: 'hint' }, `Gemeten: het scherm reageerde ${r.sync.toFixed(2)} s na je tik (mediaan van ${r.syncMeasured} ${r.syncMeasured > 1 ? 'tikken' : 'tik'}). De tikken worden zo geplaatst dat ze vallen op het moment dat het scherm reageert.`)
+        : el('p', { class: 'hint' }, 'Geen tik veranderde het beeld, dus de vertraging kon niet gemeten worden. Speel de opname af en pas dit aan tot de tik precies valt als het scherm reageert.'),
       el('div', { class: 'insp-actions' },
         el('button', { class: 'primary', onclick: () => apply(r) }, icon('add'), 'Toevoegen aan deze video'),
         el('button', { class: 'ghost', onclick: () => { st.result = null; paintSide(); } }, icon('replay'), 'Nog een opname'),

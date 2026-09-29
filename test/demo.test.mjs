@@ -115,3 +115,24 @@ test('insetFor: gestures in css pixels land on the same spot of the layout scree
   // A tablet and a browser window keep their own insets.
   assert.deepEqual(screenToDevice(insetFor(layouts.browser, [1280, 814]), 0, 0), [0, 64]);
 });
+
+test('latency: scene scores are read from ffmpeg, and the delay is the median time until the picture changes', async () => {
+  const { parseSceneScores, estimateDelay } = await import('../src/latency.mjs');
+  const text = `frame:0    pts:0       pts_time:0
+lavfi.scene_score=0.000000
+frame:1    pts:1000    pts_time:0.033
+lavfi.scene_score=0.410000
+frame:2    pts:2000    pts_time:2.5
+lavfi.scene_score=1.2e-3`;
+  assert.deepEqual(parseSceneScores(text), [{ t: 0, score: 0 }, { t: 0.033, score: 0.41 }, { t: 2.5, score: 0.0012 }]);
+
+  const changes = [{ t: 1.42, score: 0.3 }, { t: 3.9, score: 0.2 }, { t: 6.55, score: 0.4 }, { t: 9.6, score: 0.1 }];
+  const gestures = [{ kind: 'tap', t: 1 }, { kind: 'type', t: 2, text: 'x' }, { kind: 'swipe', t: 3.5 }, { kind: 'tap', t: 6 }, { kind: 'tap', t: 8 }];
+  const est = estimateDelay(gestures, changes);
+  assert.deepEqual(est.samples, [0.42, 0.4, 0.55], 'the tap at 8 s has no reaction within 1.5 s');
+  assert.equal(est.delay, 0.42, 'the median');
+  // A change that started before the tap is not its reaction, and one that belongs to the next gesture is not either.
+  assert.deepEqual(estimateDelay([{ kind: 'tap', t: 1 }, { kind: 'tap', t: 1.3 }], [{ t: 1.2, score: 0.5 }]).samples, [0.2]);
+  assert.equal(estimateDelay([{ kind: 'tap', t: 5 }], [{ t: 5.005, score: 0.5 }]).delay, null, 'less than 20 ms: already going on');
+  assert.equal(estimateDelay([], changes).delay, null);
+});

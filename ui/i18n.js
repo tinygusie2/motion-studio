@@ -152,6 +152,10 @@ const en = {
   'Soort': 'Kind', 'Tik': 'Tap', 'Lang indrukken': 'Long press', 'Swipe': 'Swipe', 'Begin X (px)': 'Start X (px)', 'Begin Y (px)': 'Start Y (px)', 'Eind X (px)': 'End X (px)', 'Eind Y (px)': 'End Y (px)',
   'Duur swipe (s)': 'Swipe length (s)', 'Vasthouden (s)': 'Hold for (s)',
   // ---------- demo studio ----------
+  'tik': 'tap', 'tikken': 'taps',
+  'Gemeten: het scherm reageerde {0} s na je tik (mediaan van {1} {2}). De tikken worden zo geplaatst dat ze vallen op het moment dat het scherm reageert.': 'Measured: the screen reacted {0} s after your tap (median of {1} {2}). The taps are placed so they fall at the moment the screen reacts.',
+  'Geen tik veranderde het beeld, dus de vertraging kon niet gemeten worden. Speel de opname af en pas dit aan tot de tik precies valt als het scherm reageert.': 'No tap changed the picture, so the delay could not be measured. Play the recording and adjust this until the tap lands just as the screen reacts.',
+
   'Demo': 'Demo', 'Demo opnemen': 'Record a demo', 'Demo opnemen…': 'Record a demo…', 'Bedien je app hier en neem het op, met elke tik en swipe': 'Operate your app here and record it, with every tap and swipe',
   'Bedien je app hier en neem elke tik en swipe op.': 'Operate your app here and record every tap and swipe.', 'Open een app of een apparaat rechts om te beginnen.': 'Open an app or a device on the right to begin.',
   'Open eerst een project.': 'Open a project first.', 'Er wordt opgenomen. Stoppen en de opname weggooien?': 'Recording. Stop and throw the recording away?', 'Bezig…': 'Working…',

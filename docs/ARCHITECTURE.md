@@ -242,7 +242,14 @@ The log (`down/move/up/wheel/text` events, seconds since the start) becomes gest
 video's `taps`. A tap with `x2`/`y2`/`dur` is a swipe (the finger drags with a trail) and one with `hold` is a long press
 (`src/template.mjs`). `insetFor(layout, css)` maps the device's CSS pixels into the device element taps are placed in
 (`inset` of the layouts), so a tap lands on the same spot of the screen whatever the layout. The recording is added to the
-video as a clip at the playhead; the taps can be shifted in time first (Android is a moment behind).
+video as a clip at the playhead.
+
+A tap is logged when it is sent, but the screen reacts a moment later (the browser draws a frame; on Android adb starts a
+shell, the phone handles the touch, draws and encodes), and how long differs per phone and connection. So every
+recording is measured (`src/latency.mjs`): ffmpeg's scene score gives the moments the picture changed, and for every tap,
+hold or swipe the time until the first change (within 1.5 s and before the next gesture) is a sample; the median is the
+shift the taps get (`sync`, `syncMeasured` = the number of samples), shown in the review and editable. Only a recording in
+which no tap changed the picture falls back to the source's guess (0 for web, 0.3 s for Android).
 
 **Demo data** (`src/demo.mjs`, kept per project in `demo.json`): datasets of made-up values (`fields`) and app
 storage (`storage`: localStorage, sessionStorage, cookies, set before the app runs). `fieldKind` recognises an input from

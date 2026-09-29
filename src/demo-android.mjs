@@ -241,8 +241,9 @@ export class AndroidDemo {
     // Constant frame rate, even sizes, and the last picture held until the moment the recording stopped.
     const want = (t1 - rec.t0) / 1000, have = mediaSeconds(raw), pad = Math.max(0, want - have);
     await this.run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', raw, '-vf', `fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2${pad > 0.05 ? `,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)}` : ''}`, '-t', want.toFixed(3), '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]);
-    // The phone reacts a moment after an input is sent (adb starts a shell first): taps are shifted by this.
-    return { file: out, dir: rec.dir, dur: +want.toFixed(2), events: rec.events, t0: rec.t0, t1, sync: 0.1 };
+    // The phone reacts a moment after an input is sent (adb starts a shell, the phone handles the touch, draws and encodes).
+    // The recording is measured for the real delay; this is only the guess for one where no tap changed the picture.
+    return { file: out, dir: rec.dir, dur: +want.toFixed(2), events: rec.events, t0: rec.t0, t1, sync: 0.3 };
   }
   discard(rec) { if (rec?.dir) rmSync(rec.dir, { recursive: true, force: true }); }
 

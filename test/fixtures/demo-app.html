@@ -9,7 +9,7 @@
   #list { position: absolute; top: 400px; left: 0; right: 0; height: 300px; overflow: auto; background: #eef; }
   #list div { height: 80px; border-bottom: 1px solid #99a; }
 </style>
-<button id="btn" onclick="document.title = 'clicked ' + (++window.n)">Tik</button>
+<button id="btn" onclick="document.title = 'clicked ' + (++window.n); document.body.style.background = window.n % 2 ? '#bde' : '#fff'">Tik</button>
 <form>
   <input id="e" type="email" placeholder="Je e-mailadres">
   <input id="f" name="voornaam" placeholder="Voornaam">

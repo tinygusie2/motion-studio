@@ -82,7 +82,9 @@ test('a full take: open, watch the live picture, tap, fill, record, and get a cl
   assert.ok(done.dur > 2, `dur ${done.dur}`);
   assert.deepEqual(done.gestures.filter(g => g.kind !== 'type').map(g => g.kind), ['tap', 'tap']);
   assert.ok(done.gestures.some(g => g.kind === 'type' && g.text === 'k@x.nl'));
-  assert.equal(done.sync, 0);
+  // The button changes the picture, so the recording can be measured: how long until the screen reacted to the tap.
+  assert.ok(done.syncMeasured >= 1, `measured from ${done.syncMeasured} taps`);
+  assert.ok(done.sync >= 0.02 && done.sync < 0.8, `delay ${done.sync}`);
 
   ctl.abort();
   const closed = await json(await fetch(`${url}/api/demo/session`, { method: 'DELETE' }));
