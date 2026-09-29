@@ -447,7 +447,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
       }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
-      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence|gestures|demo)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
+      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence|gestures|demo|headfx|backgrounds)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 
       if (p.startsWith('/api/demo') && !ws) return send(res, 400, { error: 'Open eerst een project.' });
       if (await demo.route(p, method, req, res, { readJsonBody, send, url })) return;

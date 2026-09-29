@@ -74,3 +74,10 @@ test('speechSegments / mapFromSegments: long silences leave the audio and the ti
   assert.deepEqual(speechSegments([], 4), [[0, 4]]);
   assert.deepEqual(speechSegments([{ s: 0, e: 4 }], 4, { pad: 0.1 }), []); // all silence: nothing to listen to
 });
+
+test('cutRanges: background changes move with the cut, headline effect names stay', () => {
+  const v = { dur: 10, end: 9, heads: [{ t: 0, text: 'A', fxIn: 'pop', fxOut: 'blur' }, { t: 5, text: 'B', fxOut: 'fade' }], bgs: [{ t: 4, style: 'grid' }, { t: 7, style: 'blur' }], clips: [] };
+  cutRanges(v, [[2, 3]]);
+  assert.deepEqual(v.bgs.map(b => b.t), [3, 6]);
+  assert.deepEqual(v.heads.map(h => [h.t, h.fxIn, h.fxOut]), [[0, 'pop', 'blur'], [4, undefined, 'fade']]);
+});

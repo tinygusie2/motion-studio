@@ -6,6 +6,8 @@ import { silenceCuts, silenceLevels } from '/lib/silence.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { starters, starterSpec } from '/lib/starters.mjs';
 import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
+import { headIns, headOuts, headInOf, headOutOf } from '/lib/headfx.mjs';
+import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -1224,6 +1226,10 @@ function renderInspector() {
     el('p', { class: 'hint' }, 'Zet *sterretjes* om woorden heen voor de accentkleur. Blijft staan tot de volgende tekst.'),
     field('Start (s)', it.t, (x, v) => (v.heads[i].t = x), { type: 'number', step: 0.05, min: 0 }),
     check('Hook (grotere tekst, voor de opening)', it.hook, (x, v) => { if (x) v.heads[i].hook = true; else delete v.heads[i].hook; }),
+    el('div', { class: 'field-row' },
+      selectField('Komt binnen', headInOf(it), Object.entries(headIns).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'rise') delete v.heads[i].fxIn; else v.heads[i].fxIn = x; }),
+      selectField('Gaat weg', headOutOf(it), Object.entries(headOuts).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'lift') delete v.heads[i].fxOut; else v.heads[i].fxOut = x; })),
+    el('button', { class: 'ghost', title: 'Gebruik dit binnenkomen en weggaan voor alle teksten', onclick: () => commit(v => { for (const h of v.heads) { const a = v.heads[i]; if (a.fxIn) h.fxIn = a.fxIn; else delete h.fxIn; if (a.fxOut) h.fxOut = a.fxOut; else delete h.fxOut; } }) }, icon('done_all'), 'Voor alle teksten'),
     actions()
   ];
   else if (k === 'clips' || k === 'clips2') content = clipPanel(k, i, it);
@@ -1334,6 +1340,7 @@ function videoPanel() {
     el('label', { class: 'field' }, el('span', {}, 'Layout'),
       el('div', { class: 'layout-grid' }, ...Object.entries(S.layouts).map(([k, label]) =>
         el('button', { class: k === layout ? 'on' : '', title: label, onclick: () => commit(v => { v.layout = k; delete v.dual; if (k === 'dual' && !v.clips2?.length) v.clips2 = clone(v.clips); }) }, icon(LAYOUT_ICONS[k] || 'crop_portrait'), label.split(' (')[0])))),
+    backgroundSection(),
     el('label', { class: 'field' }, el('span', {}, 'Renderen in'),
       el('div', { class: 'fmt-checks' }, ...Object.entries(S.formats || {}).map(([k, f]) => {
         const list = v.formats?.length ? v.formats : ['9:16'];
@@ -1466,6 +1473,22 @@ function musicPanel(it) {
 
 // ---------- captions ----------
 // Style = defaults < brand.captions < video.captions, so a brand can set the house style and a video can deviate.
+// The scenery behind everything, and where it changes during the video.
+function backgroundSection() {
+  const v = V(), cur = bgOf(v.bg), changes = v.bgs || [];
+  const pick = (x, on) => el('button', { class: on ? 'on' : '', title: bgStyles[x].label, onclick: () => commit(v => { if (x === 'orbit') delete v.bg; else v.bg = x; }) }, icon(bgStyles[x].icon), bgStyles[x].label);
+  return el('div', { class: 'field' }, el('span', {}, 'Achtergrond'),
+    el('div', { class: 'layout-grid bg-grid' }, ...Object.keys(bgStyles).map(x => pick(x, x === cur))),
+    ...changes.map((c, j) => el('div', { class: 'field-row bg-change' },
+      field('Wisselt op (s)', c.t, (x, v) => { v.bgs[j].t = x; }, { type: 'number', step: 0.1, min: 0.5 }),
+      selectField('Naar', bgOf(c.style), Object.entries(bgStyles).map(([id, e]) => [id, e.label]), (x, v) => { v.bgs[j].style = x; }),
+      el('button', { class: 'ghost', title: 'Wisseling verwijderen', onclick: () => commit(v => { v.bgs.splice(j, 1); if (!v.bgs.length) delete v.bgs; }) }, icon('close')))),
+    el('button', { class: 'ghost', onclick: () => commit(v => {
+      const last = bgTimeline(v).at(-1).style, next = Object.keys(bgStyles).find(k => k !== last) || 'blur';
+      (v.bgs ||= []).push({ t: Math.max(0.5, +(S.t || 0).toFixed(1)), style: next });
+    }) }, icon('add'), 'Achtergrond laten wisselen'));
+}
+
 function captionsSection() {
   const v = V();
   const lines = v.vo.lines.filter(l => l.text?.trim());

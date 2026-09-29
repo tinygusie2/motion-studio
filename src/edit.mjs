@@ -71,7 +71,7 @@ export function cutRanges(v, ranges) {
     }
     v[kind] = next;
   }
-  for (const list of [v.heads, v.chips, v.zooms, v.taps, v.markers]) for (const x of list || []) {
+  for (const list of [v.heads, v.chips, v.zooms, v.taps, v.markers, v.bgs]) for (const x of list || []) {
     if (x.t != null) x.t = mapTime(rs, x.t);
     if (x.out != null) x.out = mapTime(rs, x.out);
   }

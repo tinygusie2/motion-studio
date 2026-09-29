@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { bgTimeline } from '../src/backgrounds.mjs';
 import { build, layouts, formats, stageFit, clipPlacement, placeIn, clipTransitions, transitions, W, H } from '../src/template.mjs';
 
 const brand = { name: 'MyApp', lang: 'en', theme: {} };
@@ -111,4 +112,31 @@ test('text layout: no device shown, headlines centered, sized to the format', ()
     assert.ok(!html.includes("tl.fromTo('.phone', { y: 900"), 'the device does not fly in');
   }
   assert.ok(!build(video({ layout: 'phone' }), brand, '9:16').includes(' is-text"'));
+});
+
+test('headline effects: default rise and lift, per-headline choices, and an unknown one falls back', () => {
+  const base = build(video(), brand, '9:16');
+  assert.ok(base.includes('"in":"rise","out":"lift"'));
+  assert.ok(!base.includes('class="head hook open"'), 'the mask stays on for the default');
+  const heads = [{ t: 0, text: 'One', fxIn: 'pop', fxOut: 'blur' }, { t: 2, text: 'Two', fxIn: 'nonsense', fxOut: 'shrink' }];
+  const html = build(video({ heads }), brand, '9:16');
+  assert.ok(html.includes('"list":[{"in":"pop","out":"blur"},{"in":"rise","out":"shrink"}]'));
+  assert.ok(html.includes('class="head open"'), 'scale and blur need the mask off');
+  assert.ok(html.includes('"pop":{"from":{"scale":0.4,"opacity":0}'));
+  assert.ok(!html.includes('"drop"'), 'only the effects in use are sent');
+});
+
+test('backgrounds: the video starts with its own style, changes crossfade, unknown styles fall back', () => {
+  assert.deepEqual(bgTimeline({}), [{ t: 0, style: 'orbit' }]);
+  assert.deepEqual(bgTimeline({ bg: 'nonsense' }), [{ t: 0, style: 'orbit' }]);
+  const tl = bgTimeline({ bg: 'blur', bgs: [{ t: 6, style: 'grid' }, { t: 3, style: 'blur' }, { t: 4, style: 'aurora' }, { t: 0, style: 'solid' }] });
+  assert.deepEqual(tl, [{ t: 0, style: 'blur' }, { t: 4, style: 'aurora' }, { t: 6, style: 'grid' }], 'sorted, no change to what already shows, none at 0');
+  const html = build(video({ bg: 'blur', bgs: [{ t: 4, style: 'grid' }] }), brand, '9:16');
+  assert.ok(html.includes('id="bgl-blur" class="bgl" style="opacity:1"'));
+  assert.ok(html.includes('id="bgl-grid" class="bgl" style="opacity:0"'));
+  assert.ok(html.includes('id="bgl-orbit" class="bgl" style="opacity:0"'));
+  assert.ok(html.includes("tl.fromTo('#bgl-grid', { opacity: 0 }"), 'fades in');
+  assert.ok(html.includes("tl.to('#bgl-blur', { opacity: 0"), 'fades out');
+  assert.ok(!html.includes('id="bgl-aurora"'), 'only the styles in use are in the page');
+  assert.ok(build(video(), brand, '9:16').includes('id="bgl-orbit" class="bgl" style="opacity:1"'));
 });

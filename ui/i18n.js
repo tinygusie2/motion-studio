@@ -67,6 +67,8 @@ const en = {
   // ---------- inspector: video ----------
   'Bovenregel': 'Overline', 'Merk': 'Brand', 'Bewerk': 'Edit', 'Merk bewerken': 'Edit brand', '{0} (standaard)': '{0} (default)',
   'Layout': 'Layout', 'Twee telefoons': 'Two phones', 'Browservenster': 'Browser window', 'Browservenster (desktop)': 'Browser window (desktop)',
+  'Achtergrond': 'Background', 'Ringen': 'Rings', 'Wazige kleuren': 'Blurred colors', 'Aurora': 'Aurora', 'Raster': 'Grid', 'Kleurverloop': 'Color gradient', 'Spotlight': 'Spotlight', 'Effen': 'Plain', 'Wisselt op (s)': 'Changes at (s)', 'Naar': 'To', 'Wisseling verwijderen': 'Remove change', 'Achtergrond laten wisselen': 'Change the background during the video',
+  'Alleen tekst (gecentreerd)': 'Text only (centered)', 'Komt binnen': 'Comes in', 'Gaat weg': 'Goes out', 'Omhoog (standaard)': 'Up (default)', 'Van boven': 'From above', 'Vervagen': 'Fade', 'Pop': 'Pop', 'Van links': 'From the left', 'Scherp worden': 'Sharpen', 'Naar beneden': 'Down', 'Onscherp worden': 'Blur out', 'Krimpen': 'Shrink', 'Naar rechts': 'To the right', 'Voor alle teksten': 'For all texts', 'Gebruik dit binnenkomen en weggaan voor alle teksten': 'Use this in and out for all texts',
   'Volledig scherm (geen apparaat)': 'Full screen (no device)', 'Renderen in': 'Render in', '9:16 staand': '9:16 portrait', '4:5 feed': '4:5 feed', '1:1 vierkant': '1:1 square', '16:9 liggend': '16:9 landscape',
   'Render MP4 maakt elk aangevinkt formaat. Bekijk ze met de knoppen boven de preview; tekst en apparaat worden per formaat opnieuw geschikt.':
     'Render MP4 makes every ticked format. Preview them with the buttons above the preview; text and device are rearranged per format.',

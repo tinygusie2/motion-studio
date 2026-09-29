@@ -4,6 +4,8 @@
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
 import { kfPlan } from './keyframes.mjs';
+import { headPlan } from './headfx.mjs';
+import { bgTimeline, bgMarkup, bgCss, bgScript, bgOrbitOpen } from './backgrounds.mjs';
 
 export const W = 1080, H = 1920;
 
@@ -155,7 +157,9 @@ export function build(v, brand, fmt = '9:16') {
   const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${t.x2 != null ? '<i class="tap-trail"></i>' : ''}${pointer(t)
     ? '<svg class="tap-cursor" viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 3.1-1.4-2.9-6.5 6.3-.3z"/></svg>'
     : '<i class="tap-dot"></i>'}</div>`).join('');
-  const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
+  const hfx = headPlan(v.heads);
+  const bgt = bgTimeline(v);
+  const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}${hfx.open[i] ? ' open' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
   // With transitions, clips stack by start (the incoming one on top) and a clip that hands over is held longer.
   const plans = { clip: clipTransitions(v.clips), 'clip2-': clipTransitions(L === 'dual' ? v.clips2 : []) };
   const place = (c, z) => { const p = clipPlacement(c, layouts[L].screen), style = p.style + (z ? `${p.style ? ';' : ''}z-index:${z}` : ''); return `class="clip screen-video${p.cls}"${style ? ` style="${style}"` : ''}`; };
@@ -224,6 +228,7 @@ export function build(v, brand, fmt = '9:16') {
   const script = `
       const tl = gsap.timeline({ paused: true });
       const heads = ${JSON.stringify(v.heads.map(h => h.t))};
+      const HFX = ${JSON.stringify({ list: hfx.list, ins: hfx.ins, outs: hfx.outs })};
       const chips = ${JSON.stringify(v.chips.map(({ t, out, count, suffix }) => ({ t, out, count, suffix })))};
       const zooms = ${JSON.stringify(v.zooms)};
       const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t), ...(t.x2 != null && { swipe: true, dx: Math.round(t.x2 - t.x), dy: Math.round((t.y2 ?? t.y) - t.y), dur: Math.max(0.12, +t.dur || 0.4) }), ...(t.hold > 0 && t.x2 == null && { hold: +t.hold }) })))};
@@ -238,6 +243,7 @@ export function build(v, brand, fmt = '9:16') {
       tl.fromTo('#orbit', { rotation: -8, x: 0 }, { rotation: 14, x: -60, duration: ${DUR}, ease: 'none' }, 0);
       tl.fromTo('#orbit2', { rotation: 10, y: 0 }, { rotation: -12, y: 80, duration: ${DUR}, ease: 'none' }, 0);
       tl.fromTo('#glow', { opacity: 0.55, scale: 1 }, { opacity: 0.9, scale: 1.15, duration: ${DUR}, ease: 'sine.inOut' }, 0);
+      ${bgScript(bgt, DUR)}
 
       // Overline.
       tl.fromTo('#overline', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.1);
@@ -246,9 +252,10 @@ export function build(v, brand, fmt = '9:16') {
       heads.forEach((t, i) => {
         const inner = '#h' + i + ' .wi';
         tl.set('#h' + i, { opacity: 1 }, t);
-        tl.fromTo(inner, { yPercent: 110, rotation: 4 }, { yPercent: 0, rotation: 0, duration: 0.55, ease: 'power4.out', stagger: 0.06 }, t + (i === 0 ? 0.15 : 0));
+        const fx = HFX.list[i], fin = HFX.ins[fx.in], fout = HFX.outs[fx.out];
+        tl.fromTo(inner, fin.from, fin.to, t + (i === 0 ? 0.15 : 0));
         const next = i + 1 < heads.length ? heads[i + 1] : END;
-        tl.to(inner, { yPercent: -110, duration: 0.35, ease: 'power3.in', stagger: 0.025 }, next - 0.32);
+        tl.to(inner, fout.to, next - 0.32);
         tl.set('#h' + i, { opacity: 0 }, next + 0.02);
       });
 
@@ -397,6 +404,7 @@ export function build(v, brand, fmt = '9:16') {
       #glow2 { position: absolute; width: 1200px; height: 1200px; left: -700px; bottom: -380px; border-radius: 50%; background: radial-gradient(circle, ${a(T.glow2, '22')} 0%, transparent 65%); }
       #orbit { position: absolute; width: 1100px; height: 1100px; right: -640px; top: 620px; border: 110px solid ${a(T.orbit, '14')}; border-radius: 50%; }
       #orbit2 { position: absolute; width: 700px; height: 700px; left: -420px; top: 260px; border: 70px solid ${a(T.orbit2, '0d')}; border-radius: 50%; }
+      ${bgCss(T)}
       #grain { position: absolute; inset: 0; background-image: radial-gradient(#ffffff08 1px, transparent 1px); background-size: 6px 6px; opacity: .5; }
 
       /* headline block */
@@ -409,6 +417,7 @@ export function build(v, brand, fmt = '9:16') {
       .head.hook { font-size: 104px; letter-spacing: -4px; }
       .w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 10px; margin-bottom: -10px; }
       .wi { display: inline-block; }
+      .head.open .w { overflow: visible; }
       .em .wi { color: var(--accent); }
 
       /* device: shared */
@@ -523,11 +532,8 @@ export function build(v, brand, fmt = '9:16') {
   </head>
   <body>
     <div id="root" class="F-${F.kind || 'tall'}${L === 'text' ? ' is-text' : ''}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
-      <div id="glow"></div>
-      <div id="glow2"></div>
-      <div id="orbit"></div>
-      <div id="orbit2"></div>
-      <div id="grain"></div>
+      ${bgOrbitOpen(bgt)}<div id="glow"></div><div id="glow2"></div><div id="orbit"></div><div id="orbit2"></div></div>
+      ${bgMarkup(bgt)}<div id="grain"></div>
 
       <div id="stage" data-scale="${fit?.s ?? 1}"${fit ? ` style="transform:translate(${fit.tx}px,${fit.ty}px) scale(${fit.s})"` : ''}>
       ${phones}

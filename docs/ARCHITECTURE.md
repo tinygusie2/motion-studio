@@ -109,6 +109,10 @@ The editor picks up new layouts automatically. Add an icon for yours in `LAYOUT_
 
 The `text` layout has no visible device: the device element stays in the page (so clips and their sound keep working) but is `display: none`, and `#root.is-text` centers the headlines, sized to the format (`TS` in `build`). It covers the frame like `full` in `stageFit`, is left out of the Demo Studio's device list, and works in every format.
 
+Headline effects live in `src/headfx.mjs`: a table of GSAP vars per way of coming in (`h.fxIn`) and going out (`h.fxOut`), applied to the words of a headline. `headPlan` gives the page only the effects in use, and headlines whose effect would be cut by the words' clipping mask (scale, blur, fades) get the class `open`. An unknown name falls back to the default (rise / lift).
+
+Background scenery lives in `src/backgrounds.mjs`: `v.bg` is the style the video starts with, `v.bgs = [{ t, style }]` changes it (a crossfade of `bgFade` seconds, times move with cuts). Every style in use is a `.bgl` layer behind everything (the ring scene is the original glow and rings, wrapped in `#bgl-orbit`), with slow GSAP drifts; the page only contains the layers a video uses.
+
 ## Captions
 
 `subs` holds caption blocks `{ t, out, text }` (`*stars*` = accent color). Blocks come from three places: the

@@ -42,6 +42,8 @@ tablet, browser window, full screen, or no device at all with the text centered)
   out of the video by clicking them in the captions
 - **Demo recording**: operate your web app or Android phone inside Motion Studio and record it, with every tap, swipe
   and long press logged (also the ones you make on the phone itself) and turned into animated touches, and demo data (a made-up persona) typed into the forms
+- **Background scenery**: rings, blurred colors, aurora, grid, color gradient, spotlight or plain, and the background can change during the video with a crossfade
+- **Headline effects**: every headline can come in (up, from above, fade, pop, from the left, sharpen) and go out (up, down, fade, blur, shrink, to the right) in its own way, or the same for all texts at once
 - **Zooms** onto a point you click, and **taps / clicks** that show where to look
 - **Captions** in four styles (pop, karaoke, block, classic), made from the voice-over, from any audio track with
   **speech recognition** (Whisper, on your own computer, every word at its exact moment) or imported from `.srt`/`.vtt`

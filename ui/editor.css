@@ -581,3 +581,6 @@ dialog.demo[open] { display: flex; flex-direction: column; }
 .demo-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; }
 .demo-storage { margin: 10px 0; }
 .demo-storage textarea { width: 100%; font: 12px ui-monospace, monospace; }
+
+.bg-grid { grid-template-columns: repeat(4, 1fr); }
+.bg-change { align-items: end; margin-bottom: 6px; }
