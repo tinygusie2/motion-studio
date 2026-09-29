@@ -6,7 +6,8 @@
 #   3. the self-signed "Motion Studio" certificate made by scripts\make-selfsigned-cert.ps1
 # A self-signed signature marks the file as yours and unchanged, but other PCs still show "Unknown publisher":
 # only a certificate from a trusted authority (or Azure Trusted Signing) removes that.
-param([string]$Exe = "$PSScriptRoot\..\dist\Motion Studio-win32-x64\Motion Studio.exe")
+# -Exe/-Description sign another exe, e.g. the launcher (npm run sign:launcher).
+param([string]$Exe = "$PSScriptRoot\..\dist\Motion Studio-win32-x64\Motion Studio.exe", [string]$Description = 'Motion Studio')
 $ErrorActionPreference = 'Stop'
 
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
@@ -14,7 +15,7 @@ $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\si
 if (-not $signtool) { throw 'signtool.exe not found. Install the Windows SDK (winget install Microsoft.WindowsSDK.10.0.26100).' }
 if (-not (Test-Path $Exe)) { throw "Nothing to sign at $Exe. Run npm run pack first." }
 
-$args = @('sign', '/fd', 'SHA256', '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', '/d', 'Motion Studio')
+$args = @('sign', '/fd', 'SHA256', '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', '/d', $Description)
 if ($env:MS_SIGN_PFX) {
   $args += @('/f', $env:MS_SIGN_PFX)
   if ($env:MS_SIGN_PFX_PASSWORD) { $args += @('/p', $env:MS_SIGN_PFX_PASSWORD) }
