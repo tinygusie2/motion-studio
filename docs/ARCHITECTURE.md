@@ -107,6 +107,8 @@ A new app with a different UI usually needs a different frame around the recordi
 
 The editor picks up new layouts automatically. Add an icon for yours in `LAYOUT_ICONS` in `ui/editor.js`.
 
+The `text` layout has no visible device: the device element stays in the page (so clips and their sound keep working) but is `display: none`, and `#root.is-text` centers the headlines, sized to the format (`TS` in `build`). It covers the frame like `full` in `stageFit`, is left out of the Demo Studio's device list, and works in every format.
+
 ## Captions
 
 `subs` holds caption blocks `{ t, out, text }` (`*stars*` = accent color). Blocks come from three places: the

@@ -205,7 +205,7 @@ export function createDemoStudio(ctx) {
       body.push(
         el('label', { class: 'field' }, el('span', {}, 'Adres van je app'), input, known),
         el('div', { class: 'field-row' },
-          el('label', { class: 'field' }, el('span', {}, 'Apparaat'), dropdown(Object.entries(S.layouts || {}), layout, v => (layout = v))),
+          el('label', { class: 'field' }, el('span', {}, 'Apparaat'), dropdown(Object.entries(S.layouts || {}).filter(([k]) => k !== 'text'), layout, v => (layout = v))),
           el('label', { class: 'field' }, el('span', {}, 'Scherpte'), dropdown([['standard', 'Standaard'], ['high', 'Hoog (groter bestand)']], quality, v => (quality = v)))),
         el('div', { class: 'insp-actions' },
           el('button', { class: 'primary', onclick: openWeb }, icon('play_arrow'), open ? 'Opnieuw openen' : 'Openen'),

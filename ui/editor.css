@@ -280,7 +280,7 @@ dialog .check { color: var(--text); font-size: 13px; }
 .logo-preview svg, .logo-preview img { width: 42px; height: 42px; object-fit: contain; }
 .logo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .logo-row .field { flex: 1; margin: 0; }
-.layout-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
+.layout-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
 .layout-grid button { flex-direction: column; gap: 4px; padding: 8px 2px; font-size: 10px; white-space: normal; line-height: 1.1; text-align: center; }
 .layout-grid button .ms { font-size: 22px; }
 .layout-grid button.on { border-color: var(--accent); background: #232a3a; color: var(--accent); }

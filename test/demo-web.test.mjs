@@ -27,7 +27,7 @@ const run = (cmd, args) => new Promise((ok, fail) => { const p = spawn(cmd, args
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 test('devices have the shape of the layout screens they stand in for', () => {
-  for (const layout of Object.keys(layouts)) {
+  for (const layout of Object.keys(layouts).filter(l => l !== 'text')) { // text has no device to record
     const d = deviceFor(layout), [sw, sh] = layouts[layout].screen;
     assert.ok(Math.abs(d.css[0] / d.css[1] - sw / sh) < 0.01, `${layout}: ${d.css} vs ${sw}×${sh}`);
   }

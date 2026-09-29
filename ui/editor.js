@@ -1317,7 +1317,7 @@ function renderInspector() {
   if (S.sel && S.sel.kind !== 'brand') box.querySelector('.insp-head')?.append(el('button', { class: 'ghost icon insp-close', title: 'Selectie opheffen (Esc)', onclick: () => select(null) }, icon('close')));
 }
 
-const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen' };
+const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen', text: 'title' };
 function videoPanel() {
   const v = V();
   const brand = brandOf();

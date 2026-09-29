@@ -59,7 +59,7 @@ export function createDemoManager({ getWorkspace, getSettings, run }) {
     busy = true;
     try {
       await close();
-      const layout = layouts[opts.layout] ? opts.layout : 'phone';
+      const layout = layouts[opts.layout] && opts.layout !== 'text' ? opts.layout : 'phone'; // a text-only video has no device to record
       const hooks = { onFrame: pushFrame, onNav: () => pushMeta() };
       if (opts.source === 'android') {
         session = await AndroidDemo.open({ adb: findAdb(getSettings().adb), serial: opts.serial, run }, hooks);

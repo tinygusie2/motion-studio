@@ -30,7 +30,7 @@ music, rendered to MP4 for TikTok, Reels, Shorts, LinkedIn and YouTube.**
 ## What it does
 
 You drop in screen recordings or screenshots of your app. Motion Studio puts them in a device (phone, two phones,
-tablet, browser window or full screen) and animates everything around them:
+tablet, browser window, full screen, or no device at all with the text centered) and animates everything around them:
 
 - **Starters** for the usual promo videos (app launch, how-to in 3 steps, before/after, website tour, quick tip),
   filled with your own clips so you start from a finished video instead of an empty timeline

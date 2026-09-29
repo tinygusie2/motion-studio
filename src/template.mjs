@@ -18,7 +18,9 @@ export const layouts = {
   dual: { label: 'Twee telefoons', devices: 2, enter: 'rise', screen: [616, 1334], inset: [8.64, 8.64, 0.72], box: [44, 584, 992, 1122], dev: [461, 978] },
   tablet: { label: 'Tablet', devices: 1, enter: 'rise', screen: [864, 1176], inset: [18, 18, 1], box: [90, 600, 900, 1212], dev: [900, 1212] },
   browser: { label: 'Browservenster (desktop)', devices: 1, enter: 'rise', screen: [1000, 636], inset: [0, 64, 1], box: [40, 690, 1000, 700], dev: [1000, 700] },
-  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] }
+  full: { label: 'Volledig scherm (geen apparaat)', devices: 1, enter: 'fade', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] },
+  // Only text: no device and no footage on screen, the headlines centered in the frame (in every format).
+  text: { label: 'Alleen tekst (gecentreerd)', devices: 1, enter: 'none', screen: [W, H], inset: [0, 0, 1], box: [0, 0, W, H], dev: [W, H] }
 };
 
 // Output formats. Everything is designed on the 1080×1920 stage; another format frames that stage differently:
@@ -38,7 +40,7 @@ export const placeIn = (c, fmt) => (formatOf(fmt) !== '9:16' && c.pos?.[formatOf
 export function stageFit(fmt, L) {
   const F = formats[formatOf(fmt)];
   if (!F.area) return null;
-  if (L === 'full') { const s = Math.max(F.w / W, F.h / H); return { s, tx: (F.w - W * s) / 2, ty: (F.h - H * s) / 2 }; }
+  if (L === 'full' || L === 'text') { const s = Math.max(F.w / W, F.h / H); return { s, tx: (F.w - W * s) / 2, ty: (F.h - H * s) / 2 }; }
   const [bx, by, bw, bh] = layouts[L].box, [ax, ay, aw, ah] = F.area;
   const vis = F.peek && L !== 'browser' ? bh * F.peek : bh;
   const s = Math.min(aw / bw, ah / vis);
@@ -147,6 +149,7 @@ export function build(v, brand, fmt = '9:16') {
   const chipColors = { ...defaultChipColors, ...(brand.chipColors || {}) };
   const L = v.layout;
   const F = formats[formatOf(fmt)], FW = F.w, FH = F.h, fit = stageFit(fmt, L);
+  const TS = Math.round(Math.min(FW, FH) * 0.105); // headline size of the text-only layout
   // Taps (tap/click markers on the first device, in its own pixels): a finger dot on touch devices, a pointer in the browser.
   const pointer = t => (t.style || (L === 'browser' ? 'cursor' : 'finger')) === 'cursor';
   const taps = v.taps.map((t, i) => `<div id="tap${i}" class="tap${pointer(t) ? ' cursor' : ''}" style="left:${Math.round(t.x)}px;top:${Math.round(t.y)}px"><i class="tap-ring"></i>${t.x2 != null ? '<i class="tap-trail"></i>' : ''}${pointer(t)
@@ -214,7 +217,7 @@ export function build(v, brand, fmt = '9:16') {
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
   const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
-  const enter = layouts[L].enter === 'fade'
+  const enter = layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
     ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out' }, 0.5);`
     : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12 }, 0.75);`;
 
@@ -447,6 +450,15 @@ export function build(v, brand, fmt = '9:16') {
       .L-full .screen { background: none; }
       .L-full::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(${a(T.bg, 'f0')} 0%, ${a(T.bg, 'b0')} 22%, ${a(T.bg, '00')} 42%, ${a(T.bg, '00')} 70%, ${a(T.bg, '99')} 100%); }
 
+      /* layout: text only. The device stays in the page (clips and their sound keep working) but is not shown. */
+      .L-text { display: none; }
+      #root.is-text #top-fade { display: none; }
+      #root.is-text #top { left: 70px; right: 70px; width: auto; top: 0; height: 100%; }
+      #root.is-text #overline { position: absolute; left: 0; right: 0; top: ${Math.round(FH * 0.08)}px; justify-content: center; }
+      #root.is-text .head { top: 50%; transform: translateY(-50%); text-align: center; font-size: ${TS}px; line-height: 1.02; letter-spacing: ${-Math.round(TS * 0.038)}px; }
+      #root.is-text .head.hook { font-size: ${Math.round(TS * 1.12)}px; letter-spacing: ${-Math.round(TS * 0.04)}px; }
+      #root.is-text #captions { left: 70px; right: 70px; width: auto; }
+
       /* stage: the 1080×1920 design space; other formats scale and move it (see stageFit) */
       #stage { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; transform-origin: 0 0; }
       /* formats */
@@ -510,7 +522,7 @@ export function build(v, brand, fmt = '9:16') {
     </style>
   </head>
   <body>
-    <div id="root" class="F-${F.kind || 'tall'}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
+    <div id="root" class="F-${F.kind || 'tall'}${L === 'text' ? ' is-text' : ''}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
       <div id="glow"></div>
       <div id="glow2"></div>
       <div id="orbit"></div>

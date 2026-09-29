@@ -27,12 +27,14 @@ test('stageFit: 9:16 is the stage itself; other formats put the device box insid
   for (const L of Object.keys(layouts)) assert.equal(stageFit('9:16', L), null);
   for (const [fmt, F] of Object.entries(formats)) {
     if (!F.area) continue;
-    for (const L of Object.keys(layouts).filter(l => l !== 'full')) {
+    for (const L of Object.keys(layouts).filter(l => l !== 'full' && l !== 'text')) {
       const { s, tx } = stageFit(fmt, L), [bx, , bw] = layouts[L].box, [ax, , aw] = F.area;
       assert.ok(tx + bx * s >= ax - 1 && tx + (bx + bw) * s <= ax + aw + 1, `${L} in ${fmt} fits horizontally`);
     }
-    const full = stageFit(fmt, 'full');
-    assert.ok(W * full.s >= F.w - 1 && H * full.s >= F.h - 1, `full screen covers ${fmt}`);
+    for (const L of ['full', 'text']) {
+      const cover = stageFit(fmt, L);
+      assert.ok(W * cover.s >= F.w - 1 && H * cover.s >= F.h - 1, `${L} covers ${fmt}`);
+    }
   }
 });
 
@@ -98,4 +100,15 @@ test('build: keyframes animate a clip after its transition, and every transition
     assert.match(h, new RegExp(`"type":"${tr}"`));
     assert.match(h, new RegExp(`c.type === '${tr}'`));
   }
+});
+
+test('text layout: no device shown, headlines centered, sized to the format', () => {
+  for (const fmt of Object.keys(formats)) {
+    const html = build(video({ layout: 'text' }), brand, fmt);
+    assert.match(html, /class="F-[a-z]+ is-text"/, fmt);
+    assert.ok(html.includes('.L-text { display: none; }'), fmt);
+    assert.match(html, /#root\.is-text \.head \{ top: 50%; transform: translateY\(-50%\); text-align: center; font-size: \d+px/, fmt);
+    assert.ok(!html.includes("tl.fromTo('.phone', { y: 900"), 'the device does not fly in');
+  }
+  assert.ok(!build(video({ layout: 'phone' }), brand, '9:16').includes(' is-text"'));
 });
