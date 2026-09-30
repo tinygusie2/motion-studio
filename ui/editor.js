@@ -8,7 +8,7 @@ import { starters, starterSpec } from '/lib/starters.mjs';
 import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
 import { headIns, headOuts, headInOf, headOutOf, outros, outroOf } from '/lib/headfx.mjs';
 import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
-import { sceneTimeline, deviceOf } from '/lib/template.mjs';
+import { sceneTimeline, deviceOf, sceneTransitions, sceneTrOf, sceneTrDur } from '/lib/template.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -1426,6 +1426,9 @@ function renderInspector() {
   else if (k === 'lay') content = [
     head('splitscreen', 'Layoutwissel'),
     selectField('Wisselt naar', it.layout === 'text' ? 'text' : deviceOf(V()), Object.entries(S.layouts).map(([id, label]) => [id, label]), (x, v) => setSceneLayout(v, i, x)),
+    el('div', { class: 'field-row' },
+      selectField('Overgang', sceneTrOf(it.tr), Object.entries(sceneTransitions).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'fade') delete v.lays[i].tr; else v.lays[i].tr = x; delete v.lays[i].trDur; }),
+      sceneTrOf(it.tr) === 'cut' ? null : field('Duur (s)', sceneTrDur(it), (x, v) => { v.lays[i].trDur = Math.max(0.1, Math.min(3, x)); }, { type: 'number', step: 0.1, min: 0.1, max: 3 })),
     field('Wisselt op (s)', it.t, (x, v) => { v.lays[i].t = Math.max(0.5, x); }, { type: 'number', step: 0.1, min: 0.5 }),
     el('p', { class: 'hint' }, 'Een video heeft één apparaat: een wissel gaat tussen alleen tekst (de koppen in het midden) en dat apparaat. Zet een nieuwe kop op hetzelfde moment voor een strakke overgang.'),
     el('div', { class: 'insp-actions' },

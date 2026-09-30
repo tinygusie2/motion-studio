@@ -144,7 +144,7 @@ test('backgrounds: the video starts with its own style, changes crossfade, unkno
 test('layout changes: a video can open with only text and switch to its device', () => {
   const v = video({ layout: 'text', lays: [{ t: 3, layout: 'phone' }, { t: 8, layout: 'text' }, { t: 9, layout: 'text' }] });
   assert.equal(deviceOf(v), 'phone');
-  assert.deepEqual(sceneTimeline(v), [{ t: 0, text: true }, { t: 3, text: false }, { t: 8, text: true }]);
+  assert.deepEqual(sceneTimeline(v), [{ t: 0, text: true }, { t: 3, text: false, tr: 'fade', d: 0.8 }, { t: 8, text: true, tr: 'fade', d: 0.8 }]);
   const html = build(v, brand, '9:16');
   assert.ok(html.includes('class="F-tall is-text"'), 'starts as text');
   assert.ok(html.includes('class="phone L-phone"'), 'the device is in the page');
@@ -152,4 +152,10 @@ test('layout changes: a video can open with only text and switch to its device',
   assert.ok(html.includes("tl.set('#root', { attr: { class: 'F-tall is-text' } }, 8);"));
   assert.equal(deviceOf(video({ layout: 'tablet', lays: [{ t: 2, layout: 'text' }] })), 'tablet');
   assert.ok(!build(video({ layout: 'phone' }), brand).includes("attr: { class"), 'no changes, no scene script');
+  assert.ok(html.includes("tl.fromTo('.phone', {\"opacity\":0}"), 'the device fades in (the default)');
+  assert.ok(html.includes("tl.to('#top', { opacity: 0"), 'the headlines fade around the switch');
+  const slow = build(video({ layout: 'text', lays: [{ t: 3, layout: 'phone', tr: 'rise', trDur: 1.6 }] }), brand);
+  assert.ok(slow.includes('{"opacity":0,"y":760}') && slow.includes('duration: 1.6'), 'own transition and length');
+  const cut = build(video({ layout: 'text', lays: [{ t: 3, layout: 'phone', tr: 'cut' }] }), brand);
+  assert.ok(cut.includes("tl.set('.phone', { opacity: 1 }, 3);") && !cut.includes("tl.to('#top'"), 'a cut switches at once');
 });

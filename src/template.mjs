@@ -73,12 +73,23 @@ export function deviceOf(v) {
   const next = [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout] && c.layout !== 'text').sort((a, b) => a.t - b.t)[0];
   return next ? next.layout : 'text';
 }
+// How a layout change goes: the device leaves (to text) or arrives (from text) this way, over `dur` seconds by default
+// (a change's own `trDur` overrides it). The headlines fade out and back in around the switch, so they don't jump.
+export const sceneTransitions = {
+  fade: { label: 'Overvloeien', dur: 0.8 },
+  rise: { label: 'Schuiven', dur: 1.0 },
+  zoom: { label: 'Zoomen', dur: 0.9 },
+  blur: { label: 'Wazig', dur: 0.9 },
+  cut: { label: 'Direct (harde wissel)', dur: 0 }
+};
+export const sceneTrOf = tr => sceneTransitions[tr] ? tr : 'fade';
+export const sceneTrDur = c => c.trDur != null && +c.trDur >= 0 ? Math.min(3, +c.trDur) : sceneTransitions[sceneTrOf(c.tr)].dur;
 // The scenes in order: [{ t, text }] starting at 0; a change to the scene already showing is dropped.
 export function sceneTimeline(v) {
   const list = [{ t: 0, text: layoutOf(v) === 'text' }];
   for (const c of [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout]).sort((a, b) => a.t - b.t)) {
     const text = c.layout === 'text';
-    if (text !== list.at(-1).text) list.push({ t: +c.t, text });
+    if (text !== list.at(-1).text) list.push({ t: +c.t, text, tr: sceneTrOf(c.tr), d: sceneTrDur(c) });
   }
   return list;
 }
@@ -240,23 +251,33 @@ export function build(v, brand, fmt = '9:16') {
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
   const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
-  // The device comes in at the start, or when the first device scene begins (a video can open with only text).
-  const firstDev = scenes.find(x => !x.text)?.t ?? 0, lead = TEXT0 ? 0 : null;
-  const enter = layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
-    ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out'${TEXT0 ? ', immediateRender: false' : ''} }, ${lead ?? 0.5} + ${firstDev});`
-    : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12${TEXT0 ? ', immediateRender: false' : ''} }, ${lead ?? 0.75} + ${firstDev});`;
-  // Scene changes: the device fades away for a text scene (headlines move to the middle) and comes back after it.
+  // The device comes in at the start with its layout's entrance. A video that opens with only text has none: the device
+  // arrives with the transition of the change that brings it in.
+  const enter = TEXT0 || layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
+    ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out' }, 0.5);`
+    : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12 }, 0.75);`;
+  // Scene changes: the device leaves before a text scene and arrives after it, in the change's transition; the headline
+  // block fades out just before the switch and back in after it (it moves to the middle for a text scene, or back).
   const rootCls = text => `F-${F.kind || 'tall'}${text ? ' is-text' : ''}`;
+  const away = { fade: { opacity: 0 }, rise: { opacity: 0, y: 760 }, zoom: { opacity: 0, scale: 0.78 }, blur: { opacity: 0, scale: 1.05, filter: 'blur(28px)' } };
+  const here = { fade: { opacity: 1 }, rise: { opacity: 1, y: 0 }, zoom: { opacity: 1, scale: 1 }, blur: { opacity: 1, scale: 1, filter: 'blur(0px)' } };
+  const js = o => JSON.stringify(o);
   const sceneJs = !SWITCH ? '' : [
     TEXT0 ? `tl.set('.phone', { opacity: 0 }, 0);` : '',
-    ...scenes.slice(1).flatMap(x => [
-      `tl.set('#root', { attr: { class: '${rootCls(x.text)}' } }, ${x.t});`,
-      x.text
-        ? `tl.to('.phone', { opacity: 0, scale: 0.94, duration: 0.45, ease: 'power2.in' }, ${Math.max(0, x.t - 0.45)});`
-        : x.t === firstDev
-          ? (layouts[L].enter === 'fade' ? '' : `tl.set('.phone', { opacity: 1 }, ${x.t});`)
-          : `tl.fromTo('.phone', { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.6, ease: 'power3.out', immediateRender: false }, ${x.t});`
-    ])
+    ...scenes.slice(1).flatMap(x => {
+      const d = x.tr === 'cut' ? 0 : x.d, half = +Math.min(0.45, d / 2).toFixed(3);
+      const dev = d === 0
+        ? `tl.set('.phone', { opacity: ${x.text ? 0 : 1} }, ${x.t});`
+        : x.text
+          ? `tl.fromTo('.phone', ${js(here[x.tr])}, { ...${js(away[x.tr])}, duration: ${d}, ease: '${x.tr === 'rise' ? 'power3.in' : 'power2.inOut'}', immediateRender: false }, ${+Math.max(0, x.t - d).toFixed(3)});`
+          : `tl.fromTo('.phone', ${js(away[x.tr])}, { ...${js(here[x.tr])}, duration: ${d}, ease: '${x.tr === 'rise' ? 'expo.out' : 'power2.out'}', immediateRender: false }, ${x.t});`;
+      return [
+        half ? `tl.to('#top', { opacity: 0, duration: ${half}, ease: 'power1.in' }, ${+Math.max(0, x.t - half).toFixed(3)});` : '',
+        `tl.set('#root', { attr: { class: '${rootCls(x.text)}' } }, ${x.t});`,
+        half ? `tl.to('#top', { opacity: 1, duration: ${+(half * 1.3).toFixed(3)}, ease: 'power1.out' }, ${x.t});` : '',
+        dev
+      ];
+    })
   ].filter(Boolean).join('\n      ');
 
   const script = `
