@@ -74,7 +74,7 @@ recycle bin (`trash: true`, through the `trash` function `main.mjs` passes to `s
 | --- | --- |
 | `studio.json` | `{ name, defaultBrand }` |
 | `brands/<id>.json` | name, url, lang, `logo` (file in `assets/brand/`), `font` (file in `assets/fonts/`), `theme` colors, `chipColors`, `pills`, `endNameSize`, `renderPrefix`, `css`, `captions` (default caption style) |
-| `specs/<id>.json` | one video: `brand`, `layout`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition, `kf` for its keyframes and `sound`/`vol` for its own sound), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
+| `specs/<id>.json` | one video: `brand`, `layout`, `lays`, `dur`, `end`, `heads`, `clips` (each with `tr`/`trDur` for its transition, `kf` for its keyframes and `sound`/`vol` for its own sound), `clips2`, `chips`, `zooms`, `taps`, `markers`, `vo`, `audio`, `audioVol`, `music`, `subs`, `captions`, `formats`, `tagline` |
 | `assets/clips/` | screen recordings (converted to H.264 on upload) and screenshots (png/jpg); deleted files go to `.trash/` |
 | `assets/vo/` | audio (voice and music); generated voice-overs land here; deleted files go to `.trash/` |
 | `renders/` | finished MP4s (`<renderPrefix>-<id>[-4x5\|-1x1\|-16x9].mp4`), plus a `.srt` when the video has captions |
@@ -108,6 +108,8 @@ A new app with a different UI usually needs a different frame around the recordi
 The editor picks up new layouts automatically. Add an icon for yours in `LAYOUT_ICONS` in `ui/editor.js`.
 
 The `text` layout has no visible device: the device element stays in the page (so clips and their sound keep working) but is `display: none`, and `#root.is-text` centers the headlines, sized to the format (`TS` in `build`). It covers the frame like `full` in `stageFit`, is left out of the Demo Studio's device list, and works in every format.
+
+Layout changes: `v.lays = [{ t, layout }]` switches during the video between the text-only scene and the video's one device (`deviceOf` in `src/template.mjs`: the start layout, or the first device in a change when the video opens with only text; any device in a change means that device). `sceneTimeline` gives the scenes; the page is built for the device, and the timeline toggles `is-text` on `#root` and fades `.phone` out and in, so a video can open with a centered headline and then show a phone demo.
 
 Headline effects live in `src/headfx.mjs`: a table of GSAP vars per way of coming in (`h.fxIn`) and going out (`h.fxOut`), applied to the words of a headline. `headPlan` gives the page only the effects in use, and headlines whose effect would be cut by the words' clipping mask (scale, blur, fades) get the class `open`. An unknown name falls back to the default (rise / lift).
 

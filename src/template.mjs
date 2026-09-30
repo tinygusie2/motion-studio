@@ -64,6 +64,25 @@ const a = (c, alpha) => hex(c) + alpha;
 
 export const layoutOf = v => layouts[v.layout] ? v.layout : v.dual ? 'dual' : 'phone';
 
+// Layout changes during the video: `v.lays` = [{ t, layout }]. A video has one device (the first layout that is not
+// text only); a change switches between that device and the text-only scene, so a video can open with only text and
+// then show a phone demo. Any device layout in a change means that same device.
+export function deviceOf(v) {
+  const first = layoutOf(v);
+  if (first !== 'text') return first;
+  const next = [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout] && c.layout !== 'text').sort((a, b) => a.t - b.t)[0];
+  return next ? next.layout : 'text';
+}
+// The scenes in order: [{ t, text }] starting at 0; a change to the scene already showing is dropped.
+export function sceneTimeline(v) {
+  const list = [{ t: 0, text: layoutOf(v) === 'text' }];
+  for (const c of [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout]).sort((a, b) => a.t - b.t)) {
+    const text = c.layout === 'text';
+    if (text !== list.at(-1).text) list.push({ t: +c.t, text });
+  }
+  return list;
+}
+
 // Fills in defaults so partially edited specs still build.
 export function normalize(v) {
   const out = { overline: '', tagline: '', heads: [], clips: [], clips2: [], chips: [], zooms: [], subs: [], taps: [], ...v };
@@ -149,7 +168,7 @@ export function build(v, brand, fmt = '9:16') {
   const OUTRO = outroOf(v), DUR = v.dur ?? 15, END = OUTRO === 'off' ? DUR : Math.min(v.end ?? 12.6, DUR);
   const T = { ...defaultTheme, ...(brand.theme || {}) };
   const chipColors = { ...defaultChipColors, ...(brand.chipColors || {}) };
-  const L = v.layout;
+  const L = deviceOf(v), scenes = sceneTimeline(v), TEXT0 = scenes[0].text && L !== 'text', SWITCH = scenes.length > 1 && L !== 'text';
   const F = formats[formatOf(fmt)], FW = F.w, FH = F.h, fit = stageFit(fmt, L);
   const TS = Math.round(Math.min(FW, FH) * 0.105); // headline size of the text-only layout
   // Taps (tap/click markers on the first device, in its own pixels): a finger dot on touch devices, a pointer in the browser.
@@ -221,9 +240,24 @@ export function build(v, brand, fmt = '9:16') {
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
   const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
+  // The device comes in at the start, or when the first device scene begins (a video can open with only text).
+  const firstDev = scenes.find(x => !x.text)?.t ?? 0, lead = TEXT0 ? 0 : null;
   const enter = layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
-    ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out' }, 0.5);`
-    : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12 }, 0.75);`;
+    ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out'${TEXT0 ? ', immediateRender: false' : ''} }, ${lead ?? 0.5} + ${firstDev});`
+    : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12${TEXT0 ? ', immediateRender: false' : ''} }, ${lead ?? 0.75} + ${firstDev});`;
+  // Scene changes: the device fades away for a text scene (headlines move to the middle) and comes back after it.
+  const rootCls = text => `F-${F.kind || 'tall'}${text ? ' is-text' : ''}`;
+  const sceneJs = !SWITCH ? '' : [
+    TEXT0 ? `tl.set('.phone', { opacity: 0 }, 0);` : '',
+    ...scenes.slice(1).flatMap(x => [
+      `tl.set('#root', { attr: { class: '${rootCls(x.text)}' } }, ${x.t});`,
+      x.text
+        ? `tl.to('.phone', { opacity: 0, scale: 0.94, duration: 0.45, ease: 'power2.in' }, ${Math.max(0, x.t - 0.45)});`
+        : x.t === firstDev
+          ? (layouts[L].enter === 'fade' ? '' : `tl.set('.phone', { opacity: 1 }, ${x.t});`)
+          : `tl.fromTo('.phone', { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.6, ease: 'power3.out', immediateRender: false }, ${x.t});`
+    ])
+  ].filter(Boolean).join('\n      ');
 
   const script = `
       const tl = gsap.timeline({ paused: true });
@@ -261,6 +295,7 @@ export function build(v, brand, fmt = '9:16') {
 
       // Device enters, then breathes.
       ${enter}
+      ${sceneJs}
       tl.fromTo('.phone-inner', { y: 0 }, { y: -18, duration: END - 1.8, ease: 'sine.inOut', stagger: 0.4 }, 1.8);
       // Clip transitions: the incoming clip (stacked on top) animates in while the clip it replaces, held on screen
       // for the overlap, animates out, so nothing of it shows through a fitted clip's background afterwards.
@@ -556,7 +591,7 @@ export function build(v, brand, fmt = '9:16') {
     </style>
   </head>
   <body>
-    <div id="root" class="F-${F.kind || 'tall'}${L === 'text' ? ' is-text' : ''}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
+    <div id="root" class="${rootCls(L === 'text' || scenes[0].text)}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
       ${bgOrbitOpen(bgt)}<div id="glow"></div><div id="glow2"></div><div id="orbit"></div><div id="orbit2"></div></div>
       ${bgMarkup(bgt)}<div id="grain"></div>
 

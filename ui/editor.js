@@ -8,6 +8,7 @@ import { starters, starterSpec } from '/lib/starters.mjs';
 import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
 import { headIns, headOuts, headInOf, headOutOf, outros, outroOf } from '/lib/headfx.mjs';
 import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
+import { sceneTimeline, deviceOf } from '/lib/template.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -95,12 +96,14 @@ function ensureLists(v = V()) {
   v.vo ??= { lines: [] }; v.vo.lines ??= [];
   v.subs ??= [];
 }
-const layoutOf = (v = V()) => S.layouts[v.layout] ? v.layout : v.dual ? 'dual' : 'phone';
+const startLayout = (v = V()) => S.layouts[v.layout] ? v.layout : v.dual ? 'dual' : 'phone';
+// The video's device: its own layout, or (when it opens with only text) the device of a later layout change.
+const layoutOf = (v = V()) => deviceOf(v);
 const isDual = (v = V()) => layoutOf(v) === 'dual';
 const isImage = src => /\.(png|jpe?g|webp|gif)$/i.test(src || '');
 const brandOf = (v = V()) => S.brands.find(b => b.id === v?.brand) || S.brands.find(b => b.id === S.workspace?.defaultBrand) || S.brands[0] || { id: 'none', name: 'Brand', theme: {} };
 const chipColors = () => ({ ...(S.defaultChipColors || CHIP_COLORS), ...(brandOf().chipColors || {}) });
-const listOf = kind => ({ head: V().heads, clips: V().clips, clips2: V().clips2, chips: V().chips, zoom: V().zooms, vo: V().vo.lines, sub: V().subs, tap: V().taps, bg: V().bgs || [] })[kind];
+const listOf = kind => ({ head: V().heads, clips: V().clips, clips2: V().clips2, chips: V().chips, zoom: V().zooms, vo: V().vo.lines, sub: V().subs, tap: V().taps, bg: V().bgs || [], lay: V().lays || [] })[kind];
 
 // Every change goes through commit: snapshot for undo, then save + preview refresh.
 // quiet: the change is already visible in the preview (moved by hand there), so save without rebuilding it.
@@ -469,7 +472,7 @@ function markPreviewSelection(doc = $('.pv.front')?.contentDocument) {
 // ---------- selection ----------
 function selItem() {
   if (!S.sel) return null;
-  if (S.sel.kind === 'end' || S.sel.kind === 'bg0') return V();
+  if (S.sel.kind === 'end' || S.sel.kind === 'bg0' || S.sel.kind === 'lay0') return V();
   if (S.sel.kind === 'audio') return V().audio ? V() : null;
   if (S.sel.kind === 'music') return V().music?.src ? V().music : null;
   return listOf(S.sel.kind)?.[S.sel.i] ?? null;
@@ -499,6 +502,8 @@ function itemRange(kind, it, i) {
     case 'tap': return [it.t - 0.25, it.t + 0.5 + tapLength(it)];
     case 'bg0': return [0, Math.min(DUR(), ...(V().bgs || []).map(x => x.t))];
     case 'bg': return [it.t, Math.min(DUR(), ...(V().bgs || []).filter(x => x.t > it.t).map(x => x.t))];
+    case 'lay0': return [0, Math.min(DUR(), ...(V().lays || []).map(x => x.t))];
+    case 'lay': return [it.t, Math.min(DUR(), ...(V().lays || []).filter(x => x.t > it.t).map(x => x.t))];
     case 'end': return [END(), DUR()];
     case 'audio': return [0, DUR()];
     case 'music': { const m = musicMix(V()); return [m.start, m.start + m.dur]; }
@@ -522,6 +527,13 @@ function add(kind, extra = {}) {
       const now = bgTimeline(v).filter(x => x.t <= at).at(-1).style;
       (v.bgs ||= []).push({ t: at, style: Object.keys(bgStyles).find(k => k !== now) || 'blur' }); i = v.bgs.length - 1;
     }
+    if (kind === 'lay') {
+      // Switch to the other scene: text only ↔ the device (a phone when the video has none yet).
+      const at = round(Math.max(0.5, Math.min(t, DUR() - 0.5)));
+      const text = sceneTimeline(v).filter(x => x.t <= at).at(-1).text;
+      const dev = deviceOf(v);
+      (v.lays ||= []).push({ t: at, layout: text ? (dev === 'text' ? 'phone' : dev) : 'text' }); i = v.lays.length - 1;
+    }
     if (kind === 'sub') { v.subs.push({ t, out: round(Math.max(t + 0.5, Math.min(t + 2, END()))), text: 'Nieuwe ondertitel' }); i = v.subs.length - 1; }
     if (kind === 'clips' || kind === 'clips2') {
       const list = v[kind] ??= [];
@@ -542,7 +554,7 @@ function removeSel() {
     return toast(`${refs.length} items verwijderd`);
   }
   const { kind, i } = S.sel || {};
-  if (!kind || kind === 'end' || kind === 'bg0' || kind === 'brand') return;
+  if (!kind || kind === 'end' || kind === 'bg0' || kind === 'lay0' || kind === 'brand') return;
   if (kind === 'audio') commit(v => { delete v.audio; delete v.audioVol; });
   else if (kind === 'music') commit(v => { delete v.music; });
   else commit(v => listOf(kind).splice(i, 1));
@@ -550,7 +562,7 @@ function removeSel() {
 }
 function duplicateSel() {
   const { kind, i } = S.sel || {};
-  if (!kind || ['end', 'bg0', 'brand', 'audio', 'music'].includes(kind)) return;
+  if (!kind || ['end', 'bg0', 'lay0', 'brand', 'audio', 'music'].includes(kind)) return;
   const src = clone(listOf(kind)[i]);
   const [a, b] = itemRange(kind, src, i);
   const shift = round(b - a);
@@ -907,6 +919,10 @@ function rows() {
   const bgNext = c => Math.min(dur, ...(v.bgs || []).filter(x => x.t > c.t).map(x => x.t));
   const first = Math.min(dur, ...(v.bgs || []).map(x => x.t)), bg0 = bgOf(v.bg);
   R.push({ key: 'bg', label: 'Achtergrond', icon: 'wallpaper', items: [{ kind: 'bg0', i: 0, s: 0, e: first, text: tr(bgStyles[bg0].label), ic: bgStyles[bg0].icon, noResize: true, noMove: true }, ...(v.bgs || []).map((c, i) => ({ kind: 'bg', i, s: c.t, e: Math.max(c.t + 0.3, bgNext(c)), text: `→ ${tr(bgStyles[bgOf(c.style)].label)}`, ic: bgStyles[bgOf(c.style)].icon, noResize: true }))] });
+  // Layout: a block per change (text only ↔ the device), like the background.
+  const layNext = c => Math.min(dur, ...(v.lays || []).filter(x => x.t > c.t).map(x => x.t));
+  const layName = k => tr((S.layouts[k] || k).split(' (')[0]);
+  if (v.lays?.length || startLayout(v) === 'text') R.push({ key: 'lay', label: 'Layout', icon: 'splitscreen', items: [{ kind: 'lay0', i: 0, s: 0, e: Math.min(dur, ...(v.lays || []).map(x => x.t)), text: layName(startLayout(v)), ic: LAYOUT_ICONS[startLayout(v)], noResize: true, noMove: true }, ...(v.lays || []).map((c, i) => { const k = c.layout === 'text' ? 'text' : deviceOf(v); return { kind: 'lay', i, s: c.t, e: Math.max(c.t + 0.3, layNext(c)), text: `→ ${layName(k)}`, ic: LAYOUT_ICONS[k], noResize: true }; })] });
   // Outro off: a small block at the end, so it can still be selected and switched back on.
   R.push({ key: 'end', label: 'Outro', icon: 'flag', items: [outroOf(v) === 'off'
     ? { kind: 'end', i: 0, s: Math.max(0, dur - 1.6), e: dur, text: tr('Geen outro'), cls: 'off', noResize: true, noMove: true }
@@ -1105,6 +1121,7 @@ function startDrag(e, it) {
       case 'head': v.heads[it.i].t = Math.max(0, snapMove(o.t + dt)); break;
       case 'tap': v.taps[it.i].t = Math.max(0.25, snap(o.t + dt)); break;
       case 'bg': v.bgs[it.i].t = Math.max(0.5, snap(o.t + dt)); at = v.bgs[it.i].t; break;
+      case 'lay': v.lays[it.i].t = Math.max(0.5, snap(o.t + dt)); at = v.lays[it.i].t; break;
       case 'vo': {
         v.vo.lines[it.i].t = Math.max(0, snapMove(o.t + dt));
         for (const x of voSubsNow) shiftItem(v.subs[x.j], x.o, v.vo.lines[it.i].t - o.t);
@@ -1406,6 +1423,21 @@ function renderInspector() {
       el('button', { onclick: duplicateSel, title: 'Ctrl+D' }, icon('content_copy'), 'Dupliceren'),
       el('button', { class: 'danger', onclick: removeSel, title: 'Delete' }, icon('delete'), 'Verwijderen'))
   ];
+  else if (k === 'lay') content = [
+    head('splitscreen', 'Layoutwissel'),
+    selectField('Wisselt naar', it.layout === 'text' ? 'text' : deviceOf(V()), Object.entries(S.layouts).map(([id, label]) => [id, label]), (x, v) => setSceneLayout(v, i, x)),
+    field('Wisselt op (s)', it.t, (x, v) => { v.lays[i].t = Math.max(0.5, x); }, { type: 'number', step: 0.1, min: 0.5 }),
+    el('p', { class: 'hint' }, 'Een video heeft één apparaat: een wissel gaat tussen alleen tekst (de koppen in het midden) en dat apparaat. Zet een nieuwe kop op hetzelfde moment voor een strakke overgang.'),
+    el('div', { class: 'insp-actions' },
+      el('button', { onclick: duplicateSel, title: 'Ctrl+D' }, icon('content_copy'), 'Dupliceren'),
+      el('button', { class: 'danger', onclick: removeSel, title: 'Delete' }, icon('delete'), 'Verwijderen'))
+  ];
+  else if (k === 'lay0') content = [
+    head(LAYOUT_ICONS[startLayout()] || 'splitscreen', 'Layout'),
+    el('div', { class: 'layout-grid' }, ...Object.entries(S.layouts).map(([x, label]) => el('button', { class: x === startLayout() ? 'on' : '', title: label, onclick: () => commit(v => setStartLayout(v, x)) }, icon(LAYOUT_ICONS[x] || 'crop_portrait'), label.split(' (')[0]))),
+    el('p', { class: 'hint' }, 'De layout waarmee de video begint. Wissel later met "Layoutwissel" onder Toevoegen, bijvoorbeeld van alleen tekst naar een telefoondemo.'),
+    el('button', { class: 'ghost', onclick: () => add('lay') }, icon('add'), 'Layout laten wisselen')
+  ];
   else if (k === 'bg0') content = [
     head(bgStyles[bgOf(it.bg)].icon, 'Achtergrond'),
     el('div', { class: 'layout-grid bg-grid' }, ...Object.keys(bgStyles).map(x => el('button', { class: x === bgOf(it.bg) ? 'on' : '', title: bgStyles[x].label, onclick: () => commit(v => { if (x === 'orbit') delete v.bg; else v.bg = x; }) }, icon(bgStyles[x].icon), bgStyles[x].label))),
@@ -1432,6 +1464,16 @@ function renderInspector() {
   if (S.sel && S.sel.kind !== 'brand') box.querySelector('.insp-head')?.append(el('button', { class: 'ghost icon insp-close', title: 'Selectie opheffen (Esc)', onclick: () => select(null) }, icon('close')));
 }
 
+// A video has one device; picking a device layout (at the start or in a change) makes it the device everywhere.
+function setDevice(v, k) {
+  if (k === 'text') return;
+  if (startLayout(v) !== 'text') v.layout = k;
+  for (const c of v.lays || []) if (c.layout !== 'text') c.layout = k;
+  delete v.dual;
+  if (k === 'dual' && !v.clips2?.length) v.clips2 = clone(v.clips);
+}
+function setStartLayout(v, k) { v.layout = k; delete v.dual; setDevice(v, k); }
+function setSceneLayout(v, i, k) { v.lays[i].layout = k; setDevice(v, k); }
 const LAYOUT_ICONS = { phone: 'smartphone', dual: 'devices', tablet: 'tablet_mac', browser: 'web', full: 'fullscreen', text: 'title' };
 // The voice for generated voice-over, shared by every line of the video.
 function voiceFields() {
@@ -1445,7 +1487,7 @@ function voiceFields() {
 function videoPanel() {
   const v = V();
   const brand = brandOf();
-  const layout = layoutOf();
+  const layout = startLayout();
   return [
     head('movie', v.id),
     field('Bovenregel', v.overline, (x, v) => (v.overline = x), { live: x => liveTail('overline', `${brandOf().name}${x ? ` · ${x}` : ''}`) }),
@@ -1455,7 +1497,7 @@ function videoPanel() {
         el('button', { class: 'ghost', title: 'Merk bewerken', onclick: () => select({ kind: 'brand', i: 0 }, false) }, icon('palette'), 'Bewerk'))),
     el('label', { class: 'field' }, el('span', {}, 'Layout'),
       el('div', { class: 'layout-grid' }, ...Object.entries(S.layouts).map(([k, label]) =>
-        el('button', { class: k === layout ? 'on' : '', title: label, onclick: () => commit(v => { v.layout = k; delete v.dual; if (k === 'dual' && !v.clips2?.length) v.clips2 = clone(v.clips); }) }, icon(LAYOUT_ICONS[k] || 'crop_portrait'), label.split(' (')[0])))),
+        el('button', { class: k === layout ? 'on' : '', title: label, onclick: () => commit(v => setStartLayout(v, k)) }, icon(LAYOUT_ICONS[k] || 'crop_portrait'), label.split(' (')[0])))),
     el('label', { class: 'field' }, el('span', {}, 'Renderen in'),
       el('div', { class: 'fmt-checks' }, ...Object.entries(S.formats || {}).map(([k, f]) => {
         const list = v.formats?.length ? v.formats : ['9:16'];
