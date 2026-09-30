@@ -161,7 +161,7 @@ async function createWindow() {
   win = new BrowserWindow({
     width: 980, height: 660, minWidth: 760, minHeight: 520,
     show: false, backgroundColor: '#0b0d11', title: 'Motion Launcher',
-    icon: join(here, 'icons', 'motion-studio.png'),
+    icon: join(here, 'icons', 'launcher.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0b0d11', symbolColor: '#eef0f6', height: 44 },
     webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }

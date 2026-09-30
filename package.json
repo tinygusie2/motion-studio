@@ -27,6 +27,7 @@
     "sign:cert": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-selfsigned-cert.ps1",
     "dist": "npm run pack && npm run sign",
     "launcher": "electron launcher",
+    "icon:launcher": "electron scripts/make-icon.cjs --launcher",
     "pack:launcher": "node scripts/pack-launcher.mjs",
     "sign:launcher": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -Exe \"dist/Motion Launcher-win32-x64/Motion Launcher.exe\" -Description \"Motion Launcher\"",
     "dist:launcher": "npm run pack:launcher && npm run sign:launcher",
