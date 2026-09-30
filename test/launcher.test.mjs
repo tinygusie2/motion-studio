@@ -1,13 +1,13 @@
 // The launcher's updater against a local stand-in for the GitHub API and release downloads.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { crc32 } from 'node:zlib';
-import { Store, cleanup, compareVersions, install, latestRelease, parseChecksums } from '../launcher/updater.mjs';
+import { Store, cleanup, compareVersions, findExisting, install, installedExe, latestRelease, parseChecksums } from '../launcher/updater.mjs';
 
 // A zip with stored (uncompressed) entries: { 'path/in/zip': 'content' }.
 function zip(files) {
@@ -128,4 +128,21 @@ test('cleanup removes stray folders but leaves the current and previous version'
   for (const d of ['0.9.0', '1.0.0', '2.0.0', '.staging-3.0.0']) mkdirSync(join(root, 'apps/demo', d), { recursive: true });
   cleanup(app, { root, store });
   assert.deepEqual(new Set(readdirSync(join(root, 'apps/demo'))), new Set(['1.0.0', '2.0.0']));
+});
+
+test('findExisting adopts a copy installed without the launcher, with its version', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ml-found-'));
+  try {
+    const appDir = join(dir, 'Visual-win32-x64');
+    mkdirSync(join(appDir, 'resources', 'app'), { recursive: true });
+    writeFileSync(join(appDir, 'Visual.exe'), '');
+    writeFileSync(join(appDir, 'resources', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
+    const a = { id: 'visual', exe: 'Visual.exe' };
+    assert.equal(findExisting(a, ['C:\nope\Other.exe', join(dir, 'missing', 'Visual.exe')]), null);
+    const found = findExisting(a, ['C:\nope\Other.exe', join(appDir, 'visual.EXE')]);
+    assert.equal(found.version, '0.1.0');
+    assert.equal(found.path, appDir);
+    assert.equal(installedExe(dir, a, found), join(appDir, 'Visual.exe'));
+    assert.equal(installedExe(dir, a, { version: '0.2.0' }), join(dir, 'apps', 'visual', '0.2.0', 'Visual.exe'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

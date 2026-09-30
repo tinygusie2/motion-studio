@@ -1,10 +1,10 @@
 // Motion Launcher: installs the editors listed in apps.json from their GitHub releases, keeps them up to date and
 // starts them. Extra editors can be added without a new launcher build in %APPDATA%\Motion Launcher\apps.json.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Store, cleanup, compareVersions, exePath, install, latestRelease, launch } from './updater.mjs';
+import { Store, cleanup, compareVersions, findExisting, install, installedExe, latestRelease, launch } from './updater.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const smoke = process.argv.includes('--smoke-test');
@@ -39,7 +39,34 @@ function shortcut(name, target, description = '') {
 }
 function appShortcut(a) {
   const info = store.installed(a.id);
-  if (info) shortcut(a.name, exePath(root, a, info.version), a.description);
+  if (info) shortcut(a.name, installedExe(root, a, info), a.description);
+}
+// The exes behind the Start menu and desktop shortcuts, for finding editors that were installed without the launcher.
+function shortcutTargets() {
+  if (process.platform !== 'win32') return [];
+  const dirs = [startMenu(), join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'), app.getPath('desktop')];
+  const out = [];
+  const walk = (dir, depth) => {
+    let names = [];
+    try { names = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of names) {
+      if (d.isDirectory() && depth < 2) walk(join(dir, d.name), depth + 1);
+      else if (d.name.toLowerCase().endsWith('.lnk')) { try { out.push(shell.readShortcutLink(join(dir, d.name)).target); } catch {} }
+    }
+  };
+  for (const d of dirs) walk(d, 0);
+  return out;
+}
+// Adopts copies that are already on this PC, and forgets a found copy that is gone.
+function adoptExisting() {
+  let targets = null;
+  for (const a of apps) {
+    const info = store.installed(a.id);
+    if (info?.path && !existsSync(installedExe(root, a, info))) { delete store.state.apps[a.id]; store.save(); }
+    if (store.installed(a.id)) continue;
+    const found = findExisting(a, targets ??= shortcutTargets());
+    if (found) store.setInstalled(a.id, found);
+  }
 }
 let apps = []; // loaded once Electron is ready: the locale that picks the texts is only known then
 const releases = {};   // id → latest release, or { error }
@@ -114,7 +141,10 @@ ipcMain.handle('launch', (_e, id) => {
 });
 ipcMain.handle('settings', (_e, patch) => { store.setSettings(patch); push(); return view(); });
 ipcMain.handle('open', (_e, what, id) => {
-  if (what === 'folder') return shell.openPath(id ? join(root, 'apps', id) : root);
+  if (what === 'folder') {
+    const a = apps.find(x => x.id === id), info = a && store.installed(a.id);
+    return shell.openPath(info?.path || (id ? join(root, 'apps', id) : root));
+  }
   if (what === 'release' && releases[id]?.url) return shell.openExternal(releases[id].url);
   if (what === 'repo') { const a = apps.find(x => x.id === id); if (a?.repo) return shell.openExternal(`https://github.com/${a.repo}`); }
   if (what === 'apps-file') {
@@ -126,6 +156,7 @@ ipcMain.handle('open', (_e, what, id) => {
 
 async function createWindow() {
   apps = loadApps();
+  if (!smoke) adoptExisting();
   Menu.setApplicationMenu(null);
   win = new BrowserWindow({
     width: 980, height: 660, minWidth: 760, minHeight: 520,

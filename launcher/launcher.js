@@ -8,7 +8,7 @@ const strings = {
     installed: 'Version {0} installed', notInstalled: 'Not installed', latest: 'latest {0}', noRelease: 'No release published yet',
     badgeUpdate: 'Update', badgeOk: 'Up to date', badgeFree: 'Free slot', badgeSoon: 'Coming soon', soon: 'Not released yet', configure: 'Set up…', repo: 'GitHub',
     download: 'Downloading… {0}', verify: 'Checking the download…', extract: 'Unpacking…',
-    checkFailed: 'Could not check for updates: {0}', failed: 'Failed: {0}', notes: 'What’s new in {0}', unverified: 'installed without a checksum'
+    checkFailed: 'Could not check for updates: {0}', failed: 'Failed: {0}', notes: 'What’s new in {0}', unverified: 'installed without a checksum', found: 'found on this PC'
   },
   nl: {
     title: 'Je editors', check: 'Op updates controleren', checking: 'Controleren…', checked: 'Gecontroleerd om {0}',
@@ -18,7 +18,7 @@ const strings = {
     installed: 'Versie {0} geïnstalleerd', notInstalled: 'Niet geïnstalleerd', latest: 'nieuwste {0}', noRelease: 'Nog geen release gepubliceerd',
     badgeUpdate: 'Update', badgeOk: 'Actueel', badgeFree: 'Vrije plek', badgeSoon: 'Binnenkort', soon: 'Nog niet uitgebracht', configure: 'Instellen…', repo: 'GitHub',
     download: 'Downloaden… {0}', verify: 'Download controleren…', extract: 'Uitpakken…',
-    checkFailed: 'Kon niet op updates controleren: {0}', failed: 'Mislukt: {0}', notes: 'Wat is er nieuw in {0}', unverified: 'geïnstalleerd zonder checksum'
+    checkFailed: 'Kon niet op updates controleren: {0}', failed: 'Mislukt: {0}', notes: 'Wat is er nieuw in {0}', unverified: 'geïnstalleerd zonder checksum', found: 'gevonden op deze pc'
   }
 };
 let lang = 'en';
@@ -37,6 +37,63 @@ async function run(id, action) {
   const error = await window.launcher[action](id);
   if (error) { const card = document.querySelector(`.card[data-id="${id}"] .msg`); card.hidden = false; card.className = 'msg error'; card.textContent = t('failed', error); }
 }
+
+// Release notes are GitHub markdown. They are built as DOM nodes (never as HTML), with the parts release notes use:
+// headings, paragraphs, lists, tables, quotes, rules, **bold**, *italic*, `code` and links. Images and HTML tags are left out.
+function inline(text) {
+  const out = document.createDocumentFragment();
+  const re = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|`([^`]+)`|\[([^\]]+)\]\((https?:[^)\s]+)\))/g;
+  let at = 0, m;
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/<[^>]+>/g, '');
+  while ((m = re.exec(text))) {
+    if (m.index > at) out.append(text.slice(at, m.index));
+    let node;
+    if (m[2] || m[3]) { node = document.createElement('strong'); node.append(inline(m[2] || m[3])); }
+    else if (m[4] || m[5]) { node = document.createElement('em'); node.append(inline(m[4] || m[5])); }
+    else if (m[6]) { node = document.createElement('code'); node.textContent = m[6]; }
+    else { node = document.createElement('a'); node.href = m[8]; node.target = '_blank'; node.append(inline(m[7])); }
+    out.append(node);
+    at = re.lastIndex;
+  }
+  if (at < text.length) out.append(text.slice(at));
+  return out;
+}
+function markdown(src) {
+  const root = document.createDocumentFragment();
+  const lines = src.replace(/\r/g, '').split('\n');
+  const make = (tag, text) => { const e = document.createElement(tag); if (text != null) e.append(inline(text)); return e; };
+  const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+  const isList = l => /^\s*([-*+]|\d+[.)])\s+/.test(l);
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    let m;
+    if (!line.trim() || /^\s*<[^>]+>\s*$/.test(line) || /^\s*!\[/.test(line)) { i++; continue; }
+    if ((m = /^(#{1,6})\s+(.*)/.exec(line))) { root.append(make(m[1].length <= 2 ? 'h3' : 'h4', m[2])); i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { root.append(document.createElement('hr')); i++; continue; }
+    if (/^\s*\|/.test(line) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) {
+      const table = document.createElement('table'), head = document.createElement('tr');
+      for (const c of cells(line)) head.append(make('th', c));
+      table.append(head); i += 2;
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { const tr = document.createElement('tr'); for (const c of cells(lines[i])) tr.append(make('td', c)); table.append(tr); i++; }
+      root.append(table); continue;
+    }
+    if (isList(line)) {
+      const list = document.createElement(/^\s*\d/.test(line) ? 'ol' : 'ul');
+      while (i < lines.length && (m = /^\s*([-*+]|\d+[.)])\s+(.*)/.exec(lines[i]))) { list.append(make('li', m[2])); i++; }
+      root.append(list); continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const q = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
+      root.append(make('blockquote', q.join(' '))); continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|\s*>|\s*\|)/.test(lines[i]) && !isList(lines[i])) para.push(lines[i++].trim());
+    if (para.length) root.append(make('p', para.join(' '))); else i++;
+  }
+  return root;
+}
+const dateOf = iso => { try { return new Date(iso).toLocaleDateString(lang, { day: 'numeric', month: 'long', year: 'numeric' }); } catch { return ''; } };
 
 function card(a) {
   const el = $('#card').content.firstElementChild.cloneNode(true);
@@ -60,7 +117,8 @@ function card(a) {
   const { installed, latest, job } = a;
   const parts = [installed ? t('installed', installed.version) : t('notInstalled')];
   if (latest?.version && (!installed || a.update)) parts.push(t('latest', latest.version));
-  if (installed && installed.verified === false) parts.push(t('unverified'));
+  if (installed?.found) parts.push(t('found'));
+  else if (installed && installed.verified === false) parts.push(t('unverified'));
   el.querySelector('.version').textContent = parts.join(' · ');
   if (installed && a.update) { badge.hidden = false; badge.textContent = t('badgeUpdate'); }
   else if (installed && latest?.version) { badge.hidden = false; badge.textContent = t('badgeOk'); badge.classList.add('ok'); }
@@ -80,11 +138,13 @@ function card(a) {
   else if (latest?.error) note(t('checkFailed', latest.error), 'msg error');
   else if (latest && !latest.zip) note(t('noRelease'));
 
-  if (latest?.notes && (a.update || !installed)) {
+  if (latest?.notes) {
     const notes = el.querySelector('.notes');
     notes.hidden = false;
-    notes.querySelector('summary').textContent = t('notes', latest.version);
-    notes.querySelector('.body').textContent = latest.notes;
+    notes.classList.toggle('fresh', !!a.update);
+    notes.querySelector('.n-title').textContent = t('notes', latest.version);
+    notes.querySelector('.n-date').textContent = latest.published ? dateOf(latest.published) : '';
+    notes.querySelector('.body').replaceChildren(markdown(latest.notes));
   }
 
   if (installed) actions.append(button(t('start'), () => run(a.id, 'launch'), 'primary'));

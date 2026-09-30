@@ -14,14 +14,13 @@
   },
   {
     "id": "visual",
-    "comingSoon": true,
     "name": "Visual",
     "description": {
       "nl": "Ontwerpen voor UI-mockups, posters en social visuals, die je laag voor laag doorzet naar Motion Studio.",
       "en": "Design UI mockups, posters and social visuals, and carry them into Motion Studio layer by layer."
     },
     "icon": "icons/visual.svg",
-    "_repo": "tinygusie2/visual: fill in as repo once the first release is out, and drop comingSoon",
+    "repo": "tinygusie2/visual",
     "asset": "^Visual-.*-win-x64\\.zip$",
     "checksums": "SHA256SUMS.txt",
     "exe": "Visual.exe"

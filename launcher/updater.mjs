@@ -4,7 +4,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -98,6 +98,21 @@ function extract(zip, dir) {
 
 const appDir = (root, id) => join(root, 'apps', id);
 export const exePath = (root, app, version) => join(appDir(root, app.id), version, app.exe);
+// The exe of what is installed: a version the launcher unpacked, or a copy it found elsewhere (info.path).
+export const installedExe = (root, app, info) => info.path ? join(info.path, app.exe) : exePath(root, app, info.version);
+
+// An install the launcher did not make itself: the first of `exes` (e.g. the targets of Start menu shortcuts) with the
+// app's file name. Its version comes from the packaged app's package.json; the launcher then starts that copy and
+// only installs its own when there is a newer release, so nobody has to install an editor twice.
+export function findExisting(app, exes) {
+  for (const exe of exes) {
+    if (!exe || basename(exe).toLowerCase() !== app.exe.toLowerCase() || !existsSync(exe)) continue;
+    let version = '0.0.0';
+    try { version = JSON.parse(readFileSync(join(dirname(exe), 'resources', 'app', 'package.json'), 'utf8')).version || version; } catch {}
+    return { version, path: dirname(exe), found: true, installedAt: statSync(exe).mtime.toISOString(), verified: false, previous: null };
+  }
+  return null;
+}
 
 // Downloads, checks and unpacks a release, then makes it the installed version.
 // onProgress({ phase: 'download' | 'verify' | 'extract', received, total }).
@@ -138,7 +153,7 @@ export async function install(app, release, { root, store, onProgress = () => {}
     const before = store.installed(app.id);
     store.setInstalled(app.id, {
       version: release.version, installedAt: new Date().toISOString(), verified,
-      previous: before && before.version !== release.version ? before.version : before?.previous || null
+      previous: before && !before.path && before.version !== release.version ? before.version : before?.previous || null
     });
     return store.installed(app.id);
   } finally {
@@ -165,9 +180,9 @@ export function cleanup(app, { root, store }) {
 export function launch(app, { root, store }) {
   const info = store.installed(app.id);
   if (!info) throw new Error(`${app.name} is not installed`);
-  const exe = exePath(root, app, info.version);
+  const exe = installedExe(root, app, info);
   if (!existsSync(exe)) throw new Error(`${exe} is missing; install ${app.name} again`);
-  const child = spawn(exe, app.args || [], { cwd: join(appDir(root, app.id), info.version), detached: true, stdio: 'ignore' });
+  const child = spawn(exe, app.args || [], { cwd: dirname(exe), detached: true, stdio: 'ignore' });
   child.unref();
   return child.pid;
 }
