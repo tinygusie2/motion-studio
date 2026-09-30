@@ -2,9 +2,9 @@
 // starts them. Extra editors can be added without a new launcher build in %APPDATA%\Motion Launcher\apps.json.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Store, cleanup, compareVersions, install, latestRelease, launch } from './updater.mjs';
+import { Store, cleanup, compareVersions, exePath, install, latestRelease, launch } from './updater.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const smoke = process.argv.includes('--smoke-test');
@@ -28,6 +28,18 @@ function loadApps() {
     if (at >= 0) list[at] = extra; else list.push(extra);
   }
   return list.map(a => ({ ...a, name: loc(a.name), description: loc(a.description) }));
+}
+// Start menu shortcuts, so Windows Search finds the launcher and every app it installed. An app's shortcut points at its
+// installed version, so it is written again after each update.
+const startMenu = () => join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+function shortcut(name, target, description = '') {
+  if (process.platform !== 'win32' || smoke || !existsSync(target)) return;
+  const file = join(startMenu(), `${name.replace(/[\\/:*?"<>|]/g, '')}.lnk`);
+  try { shell.writeShortcutLink(file, existsSync(file) ? 'replace' : 'create', { target, cwd: dirname(target), icon: target, iconIndex: 0, description }); } catch {}
+}
+function appShortcut(a) {
+  const info = store.installed(a.id);
+  if (info) shortcut(a.name, exePath(root, a, info.version), a.description);
 }
 let apps = []; // loaded once Electron is ready: the locale that picks the texts is only known then
 const releases = {};   // id → latest release, or { error }
@@ -80,6 +92,7 @@ async function update(id) {
     jobs[id] = { phase: 'download', received: 0, total: releases[id]?.zip?.size || 0 };
     push();
     await install(a, releases[id], { root, store, onProgress: p => { jobs[id] = { ...jobs[id], ...p }; push(); } });
+    appShortcut(a);
     delete jobs[id];
   } catch (err) {
     jobs[id] = { phase: 'error', error: String(err.message || err) };
@@ -144,7 +157,8 @@ async function createWindow() {
   }
 
   // The page asks for the first check as soon as it shows; after that, once an hour while the launcher is open.
-  for (const a of apps) cleanup(a, { root, store });
+  for (const a of apps) { cleanup(a, { root, store }); appShortcut(a); }
+  if (app.isPackaged) shortcut('Motion Launcher', process.execPath, 'Installs, updates and starts Motion Studio and Visual');
   setInterval(checkAll, CHECK_EVERY);
 }
 
