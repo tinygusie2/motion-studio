@@ -146,5 +146,5 @@ test('build: letter effects on headlines are driven by the timeline', () => {
   assert.match(html, /"chars":"type"/);
   assert.match(html, /"chars":"scramble"/);
   assert.match(html, /if \(fin\.chars\) charIn\(/);
-  assert.doesNotMatch(html, /onUpdate/);
+  assert.match(html, /tl.fromTo\(driver\(draw\)/);
 });
