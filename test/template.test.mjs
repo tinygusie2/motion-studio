@@ -159,3 +159,11 @@ test('layout changes: a video can open with only text and switch to its device',
   const cut = build(video({ layout: 'text', lays: [{ t: 3, layout: 'phone', tr: 'cut' }] }), brand);
   assert.ok(cut.includes("tl.set('.phone', { opacity: 1 }, 3);") && !cut.includes("tl.to('#top'"), 'a cut switches at once');
 });
+
+test('build: letter effects on headlines are driven by the timeline', () => {
+  const html = build(video({ heads: [{ t: 0, text: 'Hello', fxIn: 'type' }, { t: 2, text: 'World', fxIn: 'scramble' }] }), brand);
+  assert.match(html, /"chars":"type"/);
+  assert.match(html, /"chars":"scramble"/);
+  assert.match(html, /if \(fin\.chars\) charIn\(/);
+  assert.match(html, /tl.fromTo\(driver\(draw\)/);
+});

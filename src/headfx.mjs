@@ -7,7 +7,10 @@ export const headIns = {
   fade: { label: 'Vervagen', open: true, from: { opacity: 0 }, to: { opacity: 1, duration: 0.6, ease: 'power2.out', stagger: 0.08 } },
   pop: { label: 'Pop', open: true, from: { scale: 0.4, opacity: 0 }, to: { scale: 1, opacity: 1, duration: 0.5, ease: 'back.out(2.2)', stagger: 0.07 } },
   slide: { label: 'Van links', open: true, from: { xPercent: -60, opacity: 0 }, to: { xPercent: 0, opacity: 1, duration: 0.55, ease: 'power3.out', stagger: 0.07 } },
-  blur: { label: 'Scherp worden', open: true, from: { filter: 'blur(26px)', opacity: 0, scale: 1.08 }, to: { filter: 'blur(0px)', opacity: 1, scale: 1, duration: 0.7, ease: 'power2.out', stagger: 0.09 } }
+  blur: { label: 'Scherp worden', open: true, from: { filter: 'blur(26px)', opacity: 0, scale: 1.08 }, to: { filter: 'blur(0px)', opacity: 1, scale: 1, duration: 0.7, ease: 'power2.out', stagger: 0.09 } },
+  // Letter effects (`chars`): the template splits the words into letters and drives them itself; `per` = seconds per letter.
+  type: { label: 'Typemachine', chars: 'type', from: {}, to: { per: 0.05 } },
+  scramble: { label: 'Letters husselen', chars: 'scramble', from: {}, to: { per: 0.04 } }
 };
 export const headOuts = {
   lift: { label: 'Omhoog (standaard)', to: { yPercent: -110, duration: 0.35, ease: 'power3.in', stagger: 0.025 } },
@@ -23,7 +26,7 @@ export const headOutOf = h => (headOuts[h?.fxOut] ? h.fxOut : headOutDefault);
 // What the page needs for its headlines: one { in, out } per headline, and the tables of the effects in use.
 export function headPlan(heads) {
   const list = heads.map(h => ({ in: headInOf(h), out: headOutOf(h) }));
-  const pick = (table, used) => Object.fromEntries([...new Set(used)].map(k => [k, { from: table[k].from, to: table[k].to }]));
+  const pick = (table, used) => Object.fromEntries([...new Set(used)].map(k => [k, { from: table[k].from, to: table[k].to, chars: table[k].chars }]));
   return { list, ins: pick(headIns, list.map(x => x.in)), outs: pick(headOuts, list.map(x => x.out)), open: heads.map(h => !!(headIns[headInOf(h)].open || headOuts[headOutOf(h)].open)) };
 }
 

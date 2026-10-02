@@ -151,7 +151,8 @@ export const transitions = {
   slideup: { label: 'Omhoog schuiven', dur: 0.45 },
   blur: { label: 'Wazig overvloeien', dur: 0.5 },
   flash: { label: 'Flits', dur: 0.35 },
-  spin: { label: 'Draaien', dur: 0.5 }
+  spin: { label: 'Draaien', dur: 0.5 },
+  wipe: { label: 'Kleurveeg', dur: 0.6 }
 };
 
 // Plans the transitions of one clip list. The cut stays where it is (the incoming clip's start); the clip before it
@@ -309,12 +310,41 @@ export function build(v, brand, fmt = '9:16') {
       // Overline.
       tl.fromTo('#overline', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.1);
 
+      // Letter effects: split a headline's words into letters and play them off one timeline tween, so seeking
+      // (preview scrubbing, frame-by-frame render) always lands on the same frame. Scramble glyphs come from a hash of
+      // letter and step, never Math.random.
+      // A tween target whose \`v\` calls draw(v) when set. Callbacks like onUpdate don't run on a seek (they are
+      // suppressed), a property set does, so this keeps scrubbing and rendering in step.
+      const driver = draw => { let v = 0; return { get v() { return v; }, set v(x) { v = x; draw(x); } }; };
+      const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&*/<>+=';
+      function charIn(sel, fx, at) {
+        const chars = [];
+        document.querySelectorAll(sel + ' .wi').forEach(w => {
+          const s = w.textContent; w.textContent = '';
+          for (const c of s) { const e = document.createElement('span'); e.className = 'ch'; e.textContent = c; e.dataset.c = c; w.appendChild(e); chars.push(e); }
+        });
+        const n = chars.length;
+        const draw = v => {
+          const k = Math.floor(v * n), step = Math.floor(v * n * 3);
+          chars.forEach((e, i) => {
+            if (fx.chars === 'type') { e.style.visibility = i < k ? 'visible' : 'hidden'; e.classList.toggle('cur', v < 1 && i === Math.max(0, k - 1)); return; }
+            const c = e.dataset.c;
+            if (i < k || !/[\\p{L}\\p{N}]/u.test(c)) { e.textContent = c; return; }
+            const g = GLYPHS[(i * 7919 + step * 104729) % GLYPHS.length];
+            e.textContent = c === c.toLowerCase() && c !== c.toUpperCase() ? g.toLowerCase() : g;
+          });
+        };
+        draw(0);
+        tl.fromTo(driver(draw), { v: 0 }, { v: 1, duration: Math.max(0.2, n * fx.to.per), ease: 'none', immediateRender: false }, at);
+      }
+
       // Headlines: word-by-word rise in, lift out when the next arrives.
       heads.forEach((t, i) => {
         const inner = '#h' + i + ' .wi';
         tl.set('#h' + i, { opacity: 1 }, t);
         const fx = HFX.list[i], fin = HFX.ins[fx.in], fout = HFX.outs[fx.out];
-        tl.fromTo(inner, fin.from, fin.to, t + (i === 0 ? 0.15 : 0));
+        if (fin.chars) charIn('#h' + i, fin, t + (i === 0 ? 0.15 : 0));
+        else tl.fromTo(inner, fin.from, fin.to, t + (i === 0 ? 0.15 : 0));
         const next = i + 1 < heads.length ? heads[i + 1] : END;
         tl.to(inner, fout.to, next - 0.32);
         tl.set('#h' + i, { opacity: 0 }, next + 0.02);
@@ -340,6 +370,20 @@ export function build(v, brand, fmt = '9:16') {
         else if (c.type === 'blur') both([{ opacity: 0, filter: 'blur(40px)' }, { opacity: 1, filter: 'blur(0px)' }], [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(40px)' }], 'power2.out', 'power2.in');
         else if (c.type === 'flash') both([{ opacity: 0, filter: 'brightness(4)' }, { opacity: 1, filter: 'brightness(1)' }], [{ opacity: 1, filter: 'brightness(1)' }, { opacity: 0, filter: 'brightness(4)' }], 'power2.out', 'power2.in');
         else if (c.type === 'spin') both([{ opacity: 0, rotation: -25, scale: 0.6 }, { opacity: 1, rotation: 0, scale: 1 }], [{ opacity: 1, rotation: 0, scale: 1 }, { opacity: 0, rotation: 25, scale: 1.3 }], 'power3.out', 'power2.in');
+        else if (c.type === 'wipe') {
+          // An accent bar sweeps across and reveals the incoming clip behind it. The reveal goes through the clip's
+          // clip-path, so a crop (also a clip-path inset) is kept and ends exactly as it was.
+          const m = /inset\\(([^)]*)\\)/.exec(to.style.clipPath || ''), [T, R, B, Lf] = m ? m[1].trim().split(/\\s+/).map(parseFloat) : [0, 0, 0, 0];
+          const w = to.offsetWidth || SW, x0 = to.offsetLeft || 0, bw = Math.round(SW * 0.14);
+          const bar = document.createElement('div'); bar.className = 'wipe-bar'; bar.style.width = bw + 'px';
+          to.parentNode.appendChild(bar);
+          const draw = v => {
+            const r = Math.min(w - Lf, Math.max(R, x0 + w - SW * v));
+            to.style.clipPath = 'inset(' + T + 'px ' + r + 'px ' + B + 'px ' + Lf + 'px)';
+            bar.style.transform = 'translateX(' + ((SW + bw) * v - bw) + 'px)';
+          };
+          tl.fromTo(driver(draw), { v: 0 }, { v: 1, duration: c.d, ease: 'power3.inOut', immediateRender: false }, c.t);
+        }
       });
       // Keyframes come after the transitions: they start once the transition is over, so they never fight over a property.
       clipKfs.forEach(k => {
@@ -501,6 +545,9 @@ export function build(v, brand, fmt = '9:16') {
       .head.hook { font-size: 104px; letter-spacing: -4px; }
       .w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 10px; margin-bottom: -10px; }
       .wi { display: inline-block; }
+      .ch { position: relative; }
+      .ch.cur::after { content: ''; position: absolute; left: 100%; bottom: 0.1em; width: 0.5em; height: 0.1em; margin-left: 0.04em; background: currentColor; }
+      .wipe-bar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 9999; background: var(--accent); pointer-events: none; transform: translateX(-100%); }
       .head.open .w { overflow: visible; }
       .em .wi { color: var(--accent); }
 
