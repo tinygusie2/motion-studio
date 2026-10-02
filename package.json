@@ -1,7 +1,7 @@
 {
   "name": "motion-studio",
   "productName": "Motion Studio",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Desktop editor for short motion-graphics videos of your app: device mockups, callouts, zooms, captions, voice-over and music, rendered with HyperFrames.",
   "license": "MIT",
   "repository": {
@@ -26,6 +26,11 @@
     "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1",
     "sign:cert": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-selfsigned-cert.ps1",
     "dist": "npm run pack && npm run sign",
+    "launcher": "electron launcher",
+    "icon:launcher": "electron scripts/make-icon.cjs --launcher",
+    "pack:launcher": "node scripts/pack-launcher.mjs",
+    "sign:launcher": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -Exe \"dist/Motion Launcher-win32-x64/Motion Launcher.exe\" -Description \"Motion Launcher\"",
+    "dist:launcher": "npm run pack:launcher && npm run sign:launcher",
     "test": "node --test \"test/*.test.mjs\"",
     "test:ui": "node --test \"test/ui/*.test.mjs\"",
     "check": "node scripts/check.mjs"

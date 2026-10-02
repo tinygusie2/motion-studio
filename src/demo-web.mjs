@@ -1,10 +1,10 @@
 // Demo source: a web app in a Chrome page that looks like the device of the layout (its screen size, pixel density,
 // touch input). The page is shown live (screencast frames), operated with forwarded pointer events, and recorded as
 // frames plus a log of what the user did.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickValue, storageScript, storageEntries, typingPlan } from './demo.mjs';
+import { eventTime, pickValue, storageScript, storageEntries, typingPlan } from './demo.mjs';
 
 // What the page pretends to be for each layout. The CSS size has the shape of the layout's screen, so a recording fills
 // it; `dsf` is the pixel density (the frames are css × dsf).
@@ -94,32 +94,32 @@ export class WebDemo {
   async title() { return String((await this.page.send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.value || ''); }
 
   // ---- input: events from the demo view, in the device's CSS pixels ----
-  log(ev) { if (this.rec) this.rec.events.push({ ...ev, t: +((Date.now() - this.rec.t0) / 1000).toFixed(3) }); }
+  log(ev, at = Date.now()) { if (this.rec) this.rec.events.push({ ...ev, t: +((at - this.rec.t0) / 1000).toFixed(3) }); }
   async input(ev) {
-    const { page, dev } = this, { x = 0, y = 0 } = ev;
+    const { page, dev } = this, { x = 0, y = 0 } = ev, at = eventTime(ev);
     if (ev.type === 'down') {
-      this.down = true; this.log({ type: 'down', x, y });
+      this.down = true; this.log({ type: 'down', x, y }, at);
       if (dev.mobile) await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
       else await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
     } else if (ev.type === 'move') {
       if (this.down) {
-        this.log({ type: 'move', x, y });
+        this.log({ type: 'move', x, y }, at);
         if (dev.mobile) await page.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y, id: 1 }] });
         else await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
       } else if (!dev.mobile) await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
     } else if (ev.type === 'up') {
-      this.log({ type: 'up', x, y });
+      this.log({ type: 'up', x, y }, at);
       if (this.down) {
         if (dev.mobile) await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         else await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
       }
       this.down = false;
     } else if (ev.type === 'wheel') {
-      this.log({ type: 'wheel', x, y, dx: ev.dx || 0, dy: ev.dy || 0 });
+      this.log({ type: 'wheel', x, y, dx: ev.dx || 0, dy: ev.dy || 0 }, at);
       await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: ev.dx || 0, deltaY: ev.dy || 0 });
     } else if (ev.type === 'key') {
       const printable = ev.key?.length === 1 && !ev.ctrl && !ev.alt;
-      if (printable) this.log({ type: 'text', text: ev.key });
+      if (printable) this.log({ type: 'text', text: ev.key }, at);
       const mods = (ev.alt ? 1 : 0) | (ev.ctrl ? 2 : 0) | (ev.shift ? 8 : 0);
       await page.send('Input.dispatchKeyEvent', { type: printable ? 'keyDown' : 'rawKeyDown', key: ev.key, code: ev.code, modifiers: mods, windowsVirtualKeyCode: ev.keyCode || 0, ...(printable && { text: ev.key, unmodifiedText: ev.key }) });
       await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ev.key, code: ev.code, modifiers: mods, windowsVirtualKeyCode: ev.keyCode || 0 });
@@ -193,6 +193,11 @@ export class WebDemo {
     await this.snapshot(this.rec.t0 / 1000); // the screen may be still: the recording still starts with what is on it
     return this.rec.t0;
   }
+  // The page as it is now, at full sharpness (PNG bytes).
+  async screenshot() {
+    const { data } = await this.page.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+    return Buffer.from(data, 'base64');
+  }
   async snapshot(ts) {
     const { data } = await this.page.send('Page.captureScreenshot', { format: 'jpeg', quality: 88, fromSurface: true });
     this.saveFrame(data, ts);
@@ -216,20 +221,47 @@ export class WebDemo {
   }
 }
 
-// The frames of a recording as a constant-frame-rate mp4 (ffmpeg's concat demuxer holds each frame until the next one).
+// A JPEG's size in pixels, from its start-of-frame marker (null when it has none).
+export function jpegSize(buf) {
+  for (let i = 2; i + 9 < buf.length;) {
+    if (buf[i] !== 0xff) return null;
+    const m = buf[i + 1], len = buf.readUInt16BE(i + 2);
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return [buf.readUInt16BE(i + 7), buf.readUInt16BE(i + 5)];
+    i += 2 + len;
+  }
+  return null;
+}
+
+// Which frame shows at each tick of a constant frame rate: the last one that arrived by then (the first before any).
+export function frameTicks(frames, t0, t1, fps) {
+  const n = Math.max(1, Math.round((t1 - t0) * fps)), out = [];
+  for (let k = 0, j = 0; k < n; k++) {
+    const at = t0 + k / fps;
+    while (j + 1 < frames.length && frames[j + 1].ts <= at) j++;
+    out.push(j);
+  }
+  return out;
+}
+
+// The frames of a recording as a constant-frame-rate mp4. The frame for every tick is picked here and handed to ffmpeg
+// as a numbered image sequence, all scaled to the largest frame's size: Chrome sends smaller screencast frames when it
+// is busy, and a size change in the middle makes ffmpeg rebuild its filters and lose time, so the video came out short.
 // `run(cmd, args)` is the app's process runner.
 export async function encodeFrames(rec, out, run, { fps = 30 } = {}) {
   const t0 = rec.t0 / 1000, t1 = Math.max(rec.t1 / 1000, t0 + 0.2);
   const frames = rec.frames.filter(f => f.ts <= t1);
   if (!frames.length) throw new Error('Er zijn geen beelden opgenomen.');
-  const lines = [];
-  frames.forEach((f, i) => {
-    const start = Math.max(f.ts, t0), end = Math.min(i + 1 < frames.length ? frames[i + 1].ts : t1, t1);
-    lines.push(`file '${f.file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`, `duration ${Math.max(1 / 240, end - start).toFixed(4)}`);
+  let [w, h] = [0, 0];
+  for (const f of frames) { const size = jpegSize(readFileSync(f.file)); if (size && size[0] > w) [w, h] = size; }
+  const seq = join(rec.dir, 'seq');
+  mkdirSync(seq, { recursive: true });
+  const ticks = frameTicks(frames, t0, t1, fps);
+  ticks.forEach((j, k) => {
+    const to = join(seq, `v${String(k).padStart(6, '0')}.jpg`);
+    try { linkSync(frames[j].file, to); } catch { copyFileSync(frames[j].file, to); }
   });
-  lines.push(`file '${frames[frames.length - 1].file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`); // the concat demuxer ignores the last duration
-  const list = join(rec.dir, 'frames.txt');
-  writeFileSync(list, lines.join('\n'));
-  await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-vf', `fps=${fps},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p`, '-t', (t1 - t0).toFixed(3), '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-movflags', '+faststart', out]);
-  return +(t1 - t0).toFixed(2);
+  const even = n => Math.max(2, Math.floor(n / 2) * 2);
+  const size = w ? `scale=${even(w)}:${even(h)}` : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  await run('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-framerate', String(fps), '-i', join(seq, 'v%06d.jpg'), '-vf', `${size},format=yuv420p`, '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-movflags', '+faststart', out]);
+  return +(ticks.length / fps).toFixed(2);
 }

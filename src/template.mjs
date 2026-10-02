@@ -4,7 +4,7 @@
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
 import { kfPlan } from './keyframes.mjs';
-import { headPlan } from './headfx.mjs';
+import { headPlan, outroOf } from './headfx.mjs';
 import { bgTimeline, bgMarkup, bgCss, bgScript, bgOrbitOpen } from './backgrounds.mjs';
 
 export const W = 1080, H = 1920;
@@ -64,7 +64,43 @@ const a = (c, alpha) => hex(c) + alpha;
 
 export const layoutOf = v => layouts[v.layout] ? v.layout : v.dual ? 'dual' : 'phone';
 
+// Layout changes during the video: `v.lays` = [{ t, layout }]. A video has one device (the first layout that is not
+// text only); a change switches between that device and the text-only scene, so a video can open with only text and
+// then show a phone demo. Any device layout in a change means that same device.
+export function deviceOf(v) {
+  const first = layoutOf(v);
+  if (first !== 'text') return first;
+  const next = [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout] && c.layout !== 'text').sort((a, b) => a.t - b.t)[0];
+  return next ? next.layout : 'text';
+}
+// How a layout change goes: the device leaves (to text) or arrives (from text) this way, over `dur` seconds by default
+// (a change's own `trDur` overrides it). The headlines fade out and back in around the switch, so they don't jump.
+export const sceneTransitions = {
+  fade: { label: 'Overvloeien', dur: 0.8 },
+  rise: { label: 'Schuiven', dur: 1.0 },
+  zoom: { label: 'Zoomen', dur: 0.9 },
+  blur: { label: 'Wazig', dur: 0.9 },
+  cut: { label: 'Direct (harde wissel)', dur: 0 }
+};
+export const sceneTrOf = tr => sceneTransitions[tr] ? tr : 'fade';
+export const sceneTrDur = c => c.trDur != null && +c.trDur >= 0 ? Math.min(3, +c.trDur) : sceneTransitions[sceneTrOf(c.tr)].dur;
+// The scenes in order: [{ t, text }] starting at 0; a change to the scene already showing is dropped.
+export function sceneTimeline(v) {
+  const list = [{ t: 0, text: layoutOf(v) === 'text' }];
+  for (const c of [...(v.lays || [])].filter(c => c && +c.t > 0 && layouts[c.layout]).sort((a, b) => a.t - b.t)) {
+    const text = c.layout === 'text';
+    if (text !== list.at(-1).text) list.push({ t: +c.t, text, tr: sceneTrOf(c.tr), d: sceneTrDur(c) });
+  }
+  return list;
+}
+
 // Fills in defaults so partially edited specs still build.
+// The media files a video has: what it uses, plus what was added to it (`media`) and not placed yet.
+export function mediaOf(v) {
+  const names = [...(v.clips || []), ...(v.clips2 || [])].map(c => c.src).concat(v.audio, v.music?.src, v.media || []);
+  return [...new Set(names.filter(Boolean))];
+}
+
 export function normalize(v) {
   const out = { overline: '', tagline: '', heads: [], clips: [], clips2: [], chips: [], zooms: [], subs: [], taps: [], ...v };
   out.heads = [...out.heads].sort((a, b) => a.t - b.t);
@@ -147,10 +183,10 @@ export function clipTransitions(list) {
 // brand = resolved brand from the workspace: { name, lang, url, logoHtml, pills, theme, chipColors, font, endNameSize, css }
 export function build(v, brand, fmt = '9:16') {
   v = normalize(v);
-  const DUR = v.dur ?? 15, END = v.end ?? 12.6;
+  const OUTRO = outroOf(v), DUR = v.dur ?? 15, END = OUTRO === 'off' ? DUR : Math.min(v.end ?? 12.6, DUR);
   const T = { ...defaultTheme, ...(brand.theme || {}) };
   const chipColors = { ...defaultChipColors, ...(brand.chipColors || {}) };
-  const L = v.layout;
+  const L = deviceOf(v), scenes = sceneTimeline(v), TEXT0 = scenes[0].text && L !== 'text', SWITCH = scenes.length > 1 && L !== 'text';
   const F = formats[formatOf(fmt)], FW = F.w, FH = F.h, fit = stageFit(fmt, L);
   const TS = Math.round(Math.min(FW, FH) * 0.105); // headline size of the text-only layout
   // Taps (tap/click markers on the first device, in its own pixels): a finger dot on touch devices, a pointer in the browser.
@@ -222,9 +258,34 @@ export function build(v, brand, fmt = '9:16') {
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
   const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
-  const enter = layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
+  // The device comes in at the start with its layout's entrance. A video that opens with only text has none: the device
+  // arrives with the transition of the change that brings it in.
+  const enter = TEXT0 || layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
     ? `tl.fromTo('.phone', { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'power2.out' }, 0.5);`
     : `tl.fromTo('.phone', { y: 900, rotation: 6, scale: 0.92 }, { y: 0, rotation: 0, scale: 1, duration: 1.0, ease: 'expo.out', stagger: 0.12 }, 0.75);`;
+  // Scene changes: the device leaves before a text scene and arrives after it, in the change's transition; the headline
+  // block fades out just before the switch and back in after it (it moves to the middle for a text scene, or back).
+  const rootCls = text => `F-${F.kind || 'tall'}${text ? ' is-text' : ''}`;
+  const away = { fade: { opacity: 0 }, rise: { opacity: 0, y: 760 }, zoom: { opacity: 0, scale: 0.78 }, blur: { opacity: 0, scale: 1.05, filter: 'blur(28px)' } };
+  const here = { fade: { opacity: 1 }, rise: { opacity: 1, y: 0 }, zoom: { opacity: 1, scale: 1 }, blur: { opacity: 1, scale: 1, filter: 'blur(0px)' } };
+  const js = o => JSON.stringify(o);
+  const sceneJs = !SWITCH ? '' : [
+    TEXT0 ? `tl.set('.phone', { opacity: 0 }, 0);` : '',
+    ...scenes.slice(1).flatMap(x => {
+      const d = x.tr === 'cut' ? 0 : x.d, half = +Math.min(0.45, d / 2).toFixed(3);
+      const dev = d === 0
+        ? `tl.set('.phone', { opacity: ${x.text ? 0 : 1} }, ${x.t});`
+        : x.text
+          ? `tl.fromTo('.phone', ${js(here[x.tr])}, { ...${js(away[x.tr])}, duration: ${d}, ease: '${x.tr === 'rise' ? 'power3.in' : 'power2.inOut'}', immediateRender: false }, ${+Math.max(0, x.t - d).toFixed(3)});`
+          : `tl.fromTo('.phone', ${js(away[x.tr])}, { ...${js(here[x.tr])}, duration: ${d}, ease: '${x.tr === 'rise' ? 'expo.out' : 'power2.out'}', immediateRender: false }, ${x.t});`;
+      return [
+        half ? `tl.to('#top', { opacity: 0, duration: ${half}, ease: 'power1.in' }, ${+Math.max(0, x.t - half).toFixed(3)});` : '',
+        `tl.set('#root', { attr: { class: '${rootCls(x.text)}' } }, ${x.t});`,
+        half ? `tl.to('#top', { opacity: 1, duration: ${+(half * 1.3).toFixed(3)}, ease: 'power1.out' }, ${x.t});` : '',
+        dev
+      ];
+    })
+  ].filter(Boolean).join('\n      ');
 
   const script = `
       const tl = gsap.timeline({ paused: true });
@@ -291,6 +352,7 @@ export function build(v, brand, fmt = '9:16') {
 
       // Device enters, then breathes.
       ${enter}
+      ${sceneJs}
       tl.fromTo('.phone-inner', { y: 0 }, { y: -18, duration: END - 1.8, ease: 'sine.inOut', stagger: 0.4 }, 1.8);
       // Clip transitions: the incoming clip (stacked on top) animates in while the clip it replaces, held on screen
       // for the overlap, animates out, so nothing of it shows through a fitted clip's background afterwards.
@@ -410,16 +472,38 @@ export function build(v, brand, fmt = '9:16') {
         });
       });
 
-      // End card.
-      tl.to('#overline', { opacity: 0, y: -16, duration: 0.3, ease: 'power2.in' }, END - 0.2);
-      tl.to('.phone', { y: 420, scale: 0.8, opacity: 0, duration: 0.6, ease: 'power3.in', stagger: 0.06 }, END - 0.3);
-      tl.fromTo('#endcard', { opacity: 0 }, { opacity: 1, duration: 0.3 }, END);
-      tl.fromTo('#end-logo', { scale: 0.2, rotation: -90 }, { scale: 1, rotation: 0, duration: 0.8, ease: 'back.out(1.6)' }, END + 0.05);
-      tl.fromTo('#end-ring', { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.2, ease: 'expo.out' }, END + 0.1);
-      tl.fromTo('#end-name', { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: 'power4.out' }, END + 0.3);
-      tl.fromTo('#end-tag .wi', { yPercent: 110 }, { yPercent: 0, duration: 0.5, ease: 'power4.out', stagger: 0.05 }, END + 0.5);
-      tl.fromTo('#end-pills .pill', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'back.out(2)', stagger: 0.08 }, END + 0.8);
-      tl.fromTo('#end-url', { opacity: 0 }, { opacity: 1, duration: 0.4 }, END + 1.1);
+      // End card, in the style of v.outro (none when it is off).
+      const OUTRO = '${OUTRO}';
+      if (OUTRO !== 'off') {
+        tl.to('#overline', { opacity: 0, y: -16, duration: 0.3, ease: 'power2.in' }, END - 0.2);
+        if (OUTRO === 'slide') {
+          tl.to('.phone', { y: -${FH}, duration: 0.7, ease: 'power3.in', stagger: 0.05 }, END - 0.4);
+          tl.fromTo('#endcard', { opacity: 1, y: ${FH} }, { y: 0, duration: 0.8, ease: 'power4.out' }, END - 0.1);
+        } else if (OUTRO === 'zoom') {
+          tl.to('.phone', { scale: 2.2, opacity: 0, filter: 'blur(18px)', duration: 0.6, ease: 'power2.in', stagger: 0.04 }, END - 0.3);
+          tl.fromTo('#endcard', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.7, ease: 'expo.out' }, END + 0.1);
+        } else if (OUTRO === 'flash') {
+          tl.fromTo('#end-flash', { opacity: 0 }, { opacity: 1, duration: 0.18, ease: 'power2.in' }, END - 0.18);
+          tl.set('.phone', { opacity: 0 }, END);
+          tl.set('#endcard', { opacity: 1 }, END);
+          tl.to('#end-flash', { opacity: 0, duration: 0.5, ease: 'power2.out' }, END + 0.05);
+        } else {
+          tl.to('.phone', OUTRO === 'minimal' ? { opacity: 0, duration: 0.5, ease: 'power1.in' } : { y: 420, scale: 0.8, opacity: 0, duration: 0.6, ease: 'power3.in', stagger: 0.06 }, END - 0.3);
+          tl.fromTo('#endcard', { opacity: 0 }, { opacity: 1, duration: OUTRO === 'minimal' ? 0.6 : 0.3 }, END);
+        }
+        if (OUTRO === 'minimal') {
+          tl.fromTo('#end-logo', { scale: 0.85, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.8, ease: 'power2.out' }, END + 0.1);
+          tl.fromTo('#end-name', { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: 'power2.out' }, END + 0.35);
+          tl.fromTo('#end-tag', { opacity: 0 }, { opacity: 1, duration: 0.8 }, END + 0.7);
+        } else {
+          tl.fromTo('#end-logo', { scale: 0.2, rotation: -90 }, { scale: 1, rotation: 0, duration: 0.8, ease: 'back.out(1.6)' }, END + 0.05);
+          tl.fromTo('#end-ring', { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.2, ease: 'expo.out' }, END + 0.1);
+          tl.fromTo('#end-name', { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: 'power4.out' }, END + 0.3);
+          tl.fromTo('#end-tag .wi', { yPercent: 110 }, { yPercent: 0, duration: 0.5, ease: 'power4.out', stagger: 0.05 }, END + 0.5);
+          tl.fromTo('#end-pills .pill', { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'back.out(2)', stagger: 0.08 }, END + 0.8);
+          tl.fromTo('#end-url', { opacity: 0 }, { opacity: 1, duration: 0.4 }, END + 1.1);
+        }
+      }
 
       window.__timelines['${v.id}'] = tl;`;
 
@@ -573,12 +657,15 @@ export function build(v, brand, fmt = '9:16') {
       .pill .ms { font-size: 38px; }
       .pill.a { background: var(--accent); color: var(--accent-ink); }
       .pill.b { background: #22262d; color: var(--text); border: 2px solid #343945; }
+      #end-flash { position: absolute; inset: 0; background: var(--accent); opacity: 0; z-index: 30; pointer-events: none; }
+      #endcard.O-minimal #end-ring, #endcard.O-minimal #end-pills, #endcard.O-minimal #end-url { display: none; }
+      #endcard.O-minimal #end-logo { box-shadow: none; }
       #end-url { font-size: 34px; font-weight: 650; color: var(--muted); letter-spacing: 1px; }
       ${brand.css || ''}
     </style>
   </head>
   <body>
-    <div id="root" class="F-${F.kind || 'tall'}${L === 'text' ? ' is-text' : ''}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
+    <div id="root" class="${rootCls(L === 'text' || scenes[0].text)}" data-composition-id="${v.id}" data-start="0" data-width="${FW}" data-height="${FH}" data-duration="${DUR}" data-fps="30">
       ${bgOrbitOpen(bgt)}<div id="glow"></div><div id="glow2"></div><div id="orbit"></div><div id="orbit2"></div></div>
       ${bgMarkup(bgt)}<div id="grain"></div>
 
@@ -599,13 +686,14 @@ export function build(v, brand, fmt = '9:16') {
       </div>
 ${voiceTags}${mix ? `      <audio id="music" src="assets/vo/${esc(mix.src)}" data-start="${mix.start}" data-duration="${mix.dur}" data-media-start="${mix.media}" ${mix.fx ? `data-fx-chain="${esc(JSON.stringify(mix.fx.chain))}" ` : ''}data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: 'volume', points: mix.points }, ...(mix.fx?.lanes || [])] }))}" data-track-index="41"></audio>
 ` : ''}
-      <div id="endcard">
+      ${OUTRO === 'off' ? '' : `      <div id="endcard" class="O-${OUTRO}">
         <div id="end-mark"><div id="end-ring"></div><div id="end-logo">${brand.logoHtml || ''}</div></div>
         <div id="end-name">${esc(brand.name)}</div>
         ${headHtml(v.tagline, '').replace('<h1 class="">', '<div id="end-tag">').replace('</h1>', '</div>')}
         ${pills.length ? `<div id="end-pills">${pills.map(([icon, label], i) => `<span class="pill ${i ? 'b' : 'a'}">${icon ? `<span class="ms">${esc(icon)}</span>` : ''}${esc(label)}</span>`).join('')}</div>` : ''}
         ${brand.url ? `<div id="end-url">${esc(brand.url)}</div>` : ''}
       </div>
+      ${OUTRO === 'flash' ? '<div id="end-flash"></div>' : ''}`}
     </div>
     <script>${script}
     </script>

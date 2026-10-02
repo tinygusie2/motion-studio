@@ -94,6 +94,16 @@ On first start, create a project folder (*New project…*), drop a screen record
 | `npm run pack` | Build `dist/Motion Studio-win32-x64/Motion Studio.exe` |
 | `npm run sign` | Sign that `.exe` (see [signing](#signing-on-windows)) |
 | `npm run dist` | `pack` + `sign` |
+| `npm run launcher` / `npm run dist:launcher` | Run / build and sign the launcher (`dist/Motion Launcher-win32-x64`) |
+
+### The launcher
+
+**Motion Launcher** installs Motion Studio from the latest [GitHub release](https://github.com/tinygusie2/motion-studio/releases),
+keeps it up to date and starts it. It looks for a zip named `Motion-Studio-<version>-win-x64.zip` and checks it against
+`SHA256SUMS.txt` in the same release, so publish both with every release. Each version goes into its own folder under
+`%LOCALAPPDATA%\Motion Launcher\apps`, so an update never touches a copy that is still running, and the previous version
+is kept as a fallback. The launcher has a free slot for a second editor: add it to [`launcher/apps.json`](launcher/apps.json)
+(repo, asset pattern, exe), or without rebuilding via *Add an editor…*, which opens `%LOCALAPPDATA%\Motion Launcher\apps.json`.
 
 ### Handy shortcuts
 

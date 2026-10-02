@@ -72,6 +72,11 @@ export function pickValue(dataset, hints = {}) {
 }
 
 // Made-up sample data to start from, in the brand's language.
+// When an input event happened: the editor stamps each one with the clock of this same PC (`at`, ms), because the
+// request can arrive much later on a busy machine, and a quick tap must not turn into a long press. Without a
+// believable stamp, now.
+export const eventTime = (ev, now = Date.now()) => Number.isFinite(ev?.at) && Math.abs(ev.at - now) < 10000 ? ev.at : now;
+
 export function defaultDatasets(lang = 'en') {
   const nl = lang === 'nl';
   return [{

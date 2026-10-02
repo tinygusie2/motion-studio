@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeGestures, tapsFromGestures, screenToDevice, insetFor } from '../src/gestures.mjs';
-import { fieldKind, pickValue, defaultDatasets, storageScript, storageEntries, typingPlan } from '../src/demo.mjs';
+import { fieldKind, pickValue, defaultDatasets, storageScript, storageEntries, typingPlan, eventTime } from '../src/demo.mjs';
 import { layouts } from '../src/template.mjs';
 
 const ev = (t, type, x, y, extra = {}) => ({ t, type, x, y, ...extra });
@@ -135,4 +135,11 @@ lavfi.scene_score=1.2e-3`;
   assert.deepEqual(estimateDelay([{ kind: 'tap', t: 1 }, { kind: 'tap', t: 1.3 }], [{ t: 1.2, score: 0.5 }]).samples, [0.2]);
   assert.equal(estimateDelay([{ kind: 'tap', t: 5 }], [{ t: 5.005, score: 0.5 }]).delay, null, 'less than 20 ms: already going on');
   assert.equal(estimateDelay([], changes).delay, null);
+});
+
+test('eventTime: the stamp the editor gave an event, unless it is missing or far off', () => {
+  assert.equal(eventTime({ at: 1000 }, 1600), 1000, 'a quick tap stays quick when its request arrives late');
+  assert.equal(eventTime({}, 1600), 1600);
+  assert.equal(eventTime({ at: 'x' }, 1600), 1600);
+  assert.equal(eventTime({ at: 1600 - 60000 }, 1600), 1600, 'a clock that is off by a minute is not trusted');
 });

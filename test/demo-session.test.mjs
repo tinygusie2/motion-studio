@@ -66,7 +66,8 @@ test('a full take: open, watch the live picture, tap, fill, record, and get a cl
   assert.ok(seen.frames >= 1, 'a picture');
 
   assert.ok((await json(await post('record', { action: 'start' }))).t0 > 0);
-  const tap = async (x, y) => { await post('input', { events: [{ type: 'down', x, y }] }); await sleep(70); await post('input', { events: [{ type: 'up', x, y }] }); await sleep(250); };
+  // Like the editor, every event carries when it happened: a busy PC may deliver the up long after the down.
+  const tap = async (x, y) => { const at = Date.now(); await post('input', { events: [{ type: 'down', x, y, at }] }); await sleep(70); await post('input', { events: [{ type: 'up', x, y, at: at + 70 }] }); await sleep(250); };
   await tap(60, 50); // the button
   const filled = await json(await post('fill', { dataset: 'klant', mode: 'all' }));
   assert.deepEqual(filled.filled.map(f => f.kind), ['email'], 'only the fields the dataset has something for');

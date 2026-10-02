@@ -1,0 +1,28 @@
+[
+  {
+    "id": "motion-studio",
+    "name": "Motion Studio",
+    "description": {
+      "nl": "Promovideo's van je app: apparaatmockups, callouts, zooms, ondertitels, voice-over en muziek.",
+      "en": "Promo videos of your app: device mockups, callouts, zooms, captions, voice-over and music."
+    },
+    "icon": "icons/motion-studio.png",
+    "repo": "tinygusie2/motion-studio",
+    "asset": "^Motion-Studio-.*-win-x64\\.zip$",
+    "checksums": "SHA256SUMS.txt",
+    "exe": "Motion Studio.exe"
+  },
+  {
+    "id": "visual",
+    "name": "Visual",
+    "description": {
+      "nl": "Ontwerpen voor UI-mockups, posters en social visuals, die je laag voor laag doorzet naar Motion Studio.",
+      "en": "Design UI mockups, posters and social visuals, and carry them into Motion Studio layer by layer."
+    },
+    "icon": "icons/visual.svg",
+    "repo": "tinygusie2/visual",
+    "asset": "^Visual-.*-win-x64\\.zip$",
+    "checksums": "SHA256SUMS.txt",
+    "exe": "Visual.exe"
+  }
+]

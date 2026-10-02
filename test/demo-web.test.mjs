@@ -7,7 +7,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findChrome, launchBrowser } from '../src/cdp.mjs';
-import { WebDemo, deviceFor, encodeFrames } from '../src/demo-web.mjs';
+import { WebDemo, deviceFor, encodeFrames, frameTicks, jpegSize } from '../src/demo-web.mjs';
 import { analyzeGestures } from '../src/gestures.mjs';
 import { defaultDatasets } from '../src/demo.mjs';
 import { layouts } from '../src/template.mjs';
@@ -94,4 +94,16 @@ test('a browser-layout page uses the mouse: hover, click, wheel scroll and the k
   assert.equal(await demo.evaluate('document.getElementById("e").value'), 'hi');
   await assert.rejects(demo.fill(defaultDatasets('en')[0], 'focused').then(async () => { await demo.evaluate('document.activeElement.blur()'); return demo.fill(defaultDatasets('en')[0], 'focused'); }), /Klik eerst op een invulveld/);
   await demo.close();
+});
+
+test('encoding: a frame per tick (the last one that arrived), and the size of a JPEG', () => {
+  const f = ts => ({ ts });
+  // Bursts and gaps: at 10 fps, ticks at 0, .1, .2 … .5 show the latest frame so far.
+  assert.deepEqual(frameTicks([f(0), f(0.01), f(0.02), f(0.35), f(0.36)], 0, 0.5, 10), [0, 2, 2, 2, 4]);
+  assert.equal(frameTicks([f(0)], 0, 8.65, 30).length, 260, 'as many ticks as the recording is long');
+  assert.deepEqual(frameTicks([f(0.3)], 0, 0.2, 10), [0, 0], 'the first frame stands in before it arrives');
+  // A minimal JPEG header: SOI, an APP0 segment, then SOF0 with height 844 and width 390.
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x03, 0x4c, 0x01, 0x86, 0x01, 0x01, 0x11, 0x00]);
+  assert.deepEqual(jpegSize(jpg), [390, 844]);
+  assert.equal(jpegSize(Buffer.from([0xff, 0xd8, 0x00])), null);
 });

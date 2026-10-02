@@ -10,6 +10,19 @@ import { sceneChanges, estimateDelay } from './latency.mjs';
 import { defaultDatasets } from './demo.mjs';
 import { layouts } from './template.mjs';
 
+// Ports that local dev servers usually take (Next/CRA/Express, Vite, Angular, Vue CLI and friends).
+export const DEV_PORTS = [3000, 3001, 4200, 5000, 5173, 5174, 8000, 8080, 8081, 4321];
+
+// Whether something answers at `url`, and the page title when it is HTML. Any HTTP answer counts, even an error page.
+export async function probe(url, timeout = 2500) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeout), redirect: 'follow' });
+    const html = /html/i.test(res.headers.get('content-type') || '') ? (await res.text()).slice(0, 20000) : '';
+    const title = /<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() || '';
+    return { ok: true, status: res.status, title };
+  } catch { return { ok: false }; }
+}
+
 const stamp = () => new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14).replace(/^(\d{8})/, '$1-');
 
 export function createDemoManager({ getWorkspace, getSettings, run }) {
@@ -67,6 +80,10 @@ export function createDemoManager({ getWorkspace, getSettings, run }) {
       } else {
         const url = String(opts.url || '').trim();
         if (!/^(https?|file):\/\//i.test(url)) throw new Error('Geef een adres dat met http:// of https:// begint.');
+        if (/^https?:/i.test(url) && !(await probe(url)).ok) {
+          const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i.test(url);
+          throw new Error(local ? `Er draait niets op ${new URL(url).host}. Start eerst je app (bijvoorbeeld met npm run dev) en probeer het opnieuw.` : `${new URL(url).host} is niet bereikbaar. Klopt het adres en ben je online?`);
+        }
         if (!browser?.alive) { browser?.close(); browser = null; }
         browser ??= await launchBrowser({ exe: findChrome(getSettings().chrome) });
         const dataset = opts.dataset ? datasetById(opts.dataset) : undefined;
@@ -91,6 +108,23 @@ export function createDemoManager({ getWorkspace, getSettings, run }) {
     if (s.navigate === undefined) throw new Error('Dit kan alleen bij een webapp.');
     if (action === 'go') await s.navigate(url); else await s.history(action);
     pushMeta();
+  }
+  // A still of the screen as an image clip of the project.
+  async function screenshot() {
+    const s = need(), w = getWorkspace(), png = await s.screenshot();
+    mkdirSync(w.p.clips, { recursive: true });
+    let name = `screenshot-${stamp()}.png`;
+    for (let n = 2; existsSync(join(w.p.clips, name)); n++) name = `screenshot-${stamp()}-${n}.png`;
+    writeFileSync(join(w.p.clips, name), png);
+    return { clip: name, size: png.length, css: info.css, layout: info.layout };
+  }
+  // Dev servers that answer on this PC right now.
+  async function localApps() {
+    const found = await Promise.all(DEV_PORTS.map(async port => {
+      const url = `http://localhost:${port}`, r = await probe(url, 800);
+      return r.ok ? { url, name: r.title || `localhost:${port}` } : null;
+    }));
+    return found.filter(Boolean);
   }
   const startRecording = async () => { const t0 = await need().startRecording(); pushMeta(); return t0; };
 
@@ -137,11 +171,13 @@ export function createDemoManager({ getWorkspace, getSettings, run }) {
       else send(res, 405, { error: 'method' });
       return true;
     }
+    if (p === '/api/demo/local' && method === 'GET') { send(res, 200, { apps: await localApps() }); return true; }
     if (p === '/api/demo/devices' && method === 'GET') { send(res, 200, { adb: !!findAdb(getSettings().adb), devices: await listAndroidDevices(findAdb(getSettings().adb), run).catch(() => []) }); return true; }
     if (method !== 'POST' && !(method === 'DELETE' && p === '/api/demo/session')) { send(res, 405, { error: 'method' }); return true; }
     if (p === '/api/demo/session' && method === 'DELETE') { await close(); send(res, 200, status()); return true; }
     const body = method === 'POST' ? await readJsonBody(req) : {};
     if (p === '/api/demo/open') { send(res, 200, await open(body)); return true; }
+    if (p === '/api/demo/screenshot') { send(res, 200, await screenshot()); return true; }
     if (p === '/api/demo/input') { await input(body.events || []); send(res, 200, { ok: true }); return true; }
     if (p === '/api/demo/fill') { send(res, 200, { filled: await fill(body.dataset, body.mode, body.text) }); return true; }
     if (p === '/api/demo/navigate') { await navigate(body.action, body.url); send(res, 200, status()); return true; }

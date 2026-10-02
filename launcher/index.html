@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>Motion Launcher</title>
+  <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <header class="bar">
+    <img src="icons/launcher.png" alt="" class="logo">
+    <strong>Motion Launcher</strong>
+    <span class="spacer"></span>
+    <span id="status" class="muted"></span>
+    <button id="check" class="ghost" data-t="check">Check for updates</button>
+  </header>
+
+  <main>
+    <h1 data-t="title">Your editors</h1>
+    <section id="apps" class="grid"></section>
+
+    <section class="settings">
+      <label class="switch"><input type="checkbox" id="autoUpdate"><span data-t="autoUpdate">Install updates automatically</span></label>
+      <label class="switch"><input type="checkbox" id="closeOnLaunch"><span data-t="closeOnLaunch">Close after starting</span></label>
+      <span class="spacer"></span>
+      <button class="ghost" id="addEditor" data-t="addEditor">Add an editor…</button>
+      <button class="ghost" id="openRoot" data-t="openRoot">Install folder</button>
+    </section>
+  </main>
+
+  <template id="card">
+    <article class="card">
+      <div class="head">
+        <div class="icon"></div>
+        <div class="meta">
+          <h2 class="name"></h2>
+          <p class="version muted"></p>
+        </div>
+        <span class="badge" hidden></span>
+      </div>
+      <p class="desc"></p>
+      <div class="progress" hidden><div class="fill"></div></div>
+      <p class="msg" hidden></p>
+      <details class="notes" hidden><summary><span class="n-dot"></span><span class="n-title"></span><span class="n-date muted"></span><span class="n-chev"></span></summary><div class="body"></div></details>
+      <div class="actions"></div>
+    </article>
+  </template>
+
+  <script src="launcher.js"></script>
+</body>
+</html>

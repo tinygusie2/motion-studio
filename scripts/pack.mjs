@@ -13,6 +13,6 @@ const [out] = await packager({
   icon: 'resources/icon.ico',
   asar: false,
   // Paths are relative to the project, starting with /.
-  ignore: [/^\/dist(\/|$)/, /^\/scripts(\/|$)/, /^\/docs(\/|$)/, /^\/test(\/|$)/, /^\/\.git/, /^\/\.claude(\/|$)/]
+  ignore: [/^\/dist(\/|$)/, /^\/launcher(\/|$)/, /^\/scripts(\/|$)/, /^\/docs(\/|$)/, /^\/test(\/|$)/, /^\/\.git/, /^\/\.claude(\/|$)/]
 });
 console.log(`Wrote ${out}`);

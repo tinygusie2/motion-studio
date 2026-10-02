@@ -6,7 +6,7 @@ import { fieldLabels } from '/lib/demo.mjs';
 
 export function createDemoStudio(ctx) {
   const { S, api, el, icon, toast, V, round, commit, renderAll, select, loadState } = ctx;
-  const st = { source: 'web', meta: { open: false }, data: { datasets: [], apps: [] }, dataset: null, result: null, timer: 0, pending: [], busy: false, moves: null, counts: { tap: 0, swipe: 0, type: 0 }, live: [] };
+  const st = { local: null, shot: null, source: 'web', meta: { open: false }, data: { datasets: [], apps: [] }, dataset: null, result: null, timer: 0, pending: [], busy: false, moves: null, counts: { tap: 0, swipe: 0, type: 0 }, live: [] };
   let dlg, canvas, cx, es, finger, video;
   const $ = s => dlg.querySelector(s);
 
@@ -46,6 +46,7 @@ export function createDemoStudio(ctx) {
     st.dataset ??= st.data.datasets[0]?.id || null;
     st.meta = await api('/api/demo/status').catch(() => ({ open: false }));
     dlg.showModal();
+    findLocal();
     startStream();
     paint();
   }
@@ -109,27 +110,27 @@ export function createDemoStudio(ctx) {
   })();
   function wireCanvas() {
     let down = false, lastWheel = 0;
-    canvas.addEventListener('pointerdown', e => { if (!st.meta.open || e.button) return; e.preventDefault(); canvas.focus({ preventScroll: true }); canvas.setPointerCapture(e.pointerId); down = true; finger.classList.add('down'); const [x, y] = point(e); send({ type: 'down', x, y }); tally({ type: 'down', x, y }); });
+    canvas.addEventListener('pointerdown', e => { if (!st.meta.open || e.button) return; e.preventDefault(); canvas.focus({ preventScroll: true }); canvas.setPointerCapture(e.pointerId); down = true; finger.classList.add('down'); const [x, y] = point(e); send({ type: 'down', x, y, at: Date.now() }); tally({ type: 'down', x, y }); });
     canvas.addEventListener('pointermove', e => {
       const [x, y] = point(e);
       finger.style.left = `${e.clientX - canvas.parentElement.getBoundingClientRect().left}px`; finger.style.top = `${e.clientY - canvas.parentElement.getBoundingClientRect().top}px`; finger.hidden = false;
-      if (st.meta.open && (down || st.meta.mobile === false)) send({ type: 'move', x, y });
+      if (st.meta.open && (down || st.meta.mobile === false)) send({ type: 'move', x, y, at: Date.now() });
     });
-    canvas.addEventListener('pointerup', e => { if (!down) return; down = false; finger.classList.remove('down'); const [x, y] = point(e); send({ type: 'up', x, y }); tally({ type: 'up', x, y }); });
+    canvas.addEventListener('pointerup', e => { if (!down) return; down = false; finger.classList.remove('down'); const [x, y] = point(e); send({ type: 'up', x, y, at: Date.now() }); tally({ type: 'up', x, y }); });
     canvas.addEventListener('pointercancel', () => { down = false; finger.classList.remove('down'); });
     canvas.addEventListener('pointerleave', () => { finger.hidden = true; });
     canvas.addEventListener('wheel', e => {
       if (!st.meta.open) return;
       e.preventDefault();
       const [x, y] = point(e), now = performance.now();
-      send({ type: 'wheel', x, y, dx: e.deltaX, dy: e.deltaY });
+      send({ type: 'wheel', x, y, dx: e.deltaX, dy: e.deltaY, at: Date.now() });
       tally({ type: 'wheel', fresh: now - lastWheel > 300 }); lastWheel = now; paintCounts();
     }, { passive: false });
     canvas.addEventListener('keydown', e => {
       if (!st.meta.open || e.metaKey || (e.ctrlKey && e.key.length === 1)) return;
       if (e.key.length !== 1 && !['Enter', 'Backspace', 'Delete', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape'].includes(e.key)) return;
       e.preventDefault();
-      send({ type: 'key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey });
+      send({ type: 'key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, at: Date.now() });
       tally({ type: 'key', key: e.key }); paintCounts();
     });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -198,12 +199,20 @@ export function createDemoStudio(ctx) {
     const open = st.meta.open;
     const body = [];
     if (st.source === 'web') {
-      url ||= st.data.apps[0]?.url || '';
+      url ||= st.data.apps[0]?.url || st.local?.[0]?.url || '';
       const input = el('input', { value: url, placeholder: 'http://localhost:3000', list: 'demo-apps', spellcheck: false });
       input.oninput = () => (url = input.value);
-      const known = el('datalist', { id: 'demo-apps' }, ...st.data.apps.map(a => el('option', { value: a.url }, a.name)));
+      const saved = new Set(st.data.apps.map(a => a.url));
+      const known = el('datalist', { id: 'demo-apps' }, ...[...st.data.apps, ...(st.local || []).filter(a => !saved.has(a.url))].map(a => el('option', { value: a.url }, a.name)));
+      const pick = u => { url = u; paintSide(); };
       body.push(
+        el('ol', { class: 'hint demo-steps' }, el('li', {}, 'Start je app zoals je normaal doet (bijvoorbeeld npm run dev).'), el('li', {}, 'Kies hieronder het adres en klik Openen.'), el('li', {}, 'Neem op of maak een screenshot.')),
         el('label', { class: 'field' }, el('span', {}, 'Adres van je app'), input, known),
+        el('div', { class: 'demo-local' },
+          st.local === null ? el('span', { class: 'hint' }, 'Zoeken naar apps op deze pc…')
+            : st.local.length ? [el('span', { class: 'hint' }, 'Draait nu op deze pc:'), ...st.local.map(a => el('button', { class: `demo-chip${a.url === url ? ' on' : ''}`, title: a.url, onclick: () => pick(a.url) }, el('small', {}, a.url.replace('http://', '')), el('b', {}, a.name)))]
+            : el('span', { class: 'hint' }, 'Geen app gevonden die nu op deze pc draait.'),
+          el('button', { class: 'ghost icon', title: 'Opnieuw zoeken', onclick: findLocal }, icon('refresh'))),
         el('div', { class: 'field-row' },
           el('label', { class: 'field' }, el('span', {}, 'Apparaat'), dropdown(Object.entries(S.layouts || {}).filter(([k]) => k !== 'text'), layout, v => (layout = v))),
           el('label', { class: 'field' }, el('span', {}, 'Scherpte'), dropdown([['standard', 'Standaard'], ['high', 'Hoog (groter bestand)']], quality, v => (quality = v)))),
@@ -232,6 +241,11 @@ export function createDemoStudio(ctx) {
       el('p', { class: 'hint' }, 'Bediening loopt via adb: een tik of swipe gebeurt zodra je loslaat. Tijdens het opnemen worden ook aanrakingen op de telefoon zelf vastgelegd. Opnames duren maximaal 3 minuten.')
     ];
   }
+  async function findLocal() {
+    st.local = null; paintSide();
+    try { st.local = (await api('/api/demo/local')).apps; } catch { st.local = []; }
+    paintSide();
+  }
   async function loadDevices() { devices = null; paintSide(); try { devices = await api('/api/demo/devices'); } catch (e) { devices = { adb: false, devices: [] }; } paintSide(); }
   async function withBusy(text, fn) {
     const b = $('#demo-busy'); b.querySelector('span').textContent = text; b.hidden = false;
@@ -245,8 +259,9 @@ export function createDemoStudio(ctx) {
     const name = prompt('Naam voor deze app', new URL(u).host);
     if (!name) return;
     st.data.apps.push({ id: `app-${Date.now().toString(36)}`, name, url: u, layout });
-    st.data = await api('/api/demo/data', { method: 'PUT', body: JSON.stringify(st.data) });
-    paintSide();
+    try { st.data = await api('/api/demo/data', { method: 'PUT', body: JSON.stringify(st.data) }); }
+    catch (e) { return toast(`Onthouden lukte niet: ${e.message}`, true); }
+    paintSide(); toast(`"${name}" onthouden.`);
   }
 
   // ---- demo data ----
@@ -291,14 +306,15 @@ export function createDemoStudio(ctx) {
       if (storage.value.trim()) { try { d.storage = JSON.parse(storage.value); } catch { return toast('De opslag is geen geldige JSON.', true); } } else delete d.storage;
       const i = st.data.datasets.findIndex(x => x.id === d.id);
       if (i < 0) st.data.datasets.push(d); else st.data.datasets[i] = d;
-      st.data = await api('/api/demo/data', { method: 'PUT', body: JSON.stringify(st.data) });
-      st.dataset = d.id; paintSide();
+      try { st.data = await api('/api/demo/data', { method: 'PUT', body: JSON.stringify(st.data) }); }
+      catch (e) { return toast(`Opslaan lukte niet: ${e.message}`, true); }
+      st.dataset = d.id; paintSide(); toast(`"${d.name}" opgeslagen.`);
     };
     const del = async () => {
       if (st.data.datasets.length < 2 || !confirm(`"${d.name}" verwijderen?`)) return;
       st.data.datasets = st.data.datasets.filter(x => x.id !== d.id);
       st.data = await api('/api/demo/data', { method: 'PUT', body: JSON.stringify(st.data) });
-      st.dataset = st.data.datasets[0].id; paintSide();
+      st.dataset = st.data.datasets[0].id; paintSide(); toast(`"${d.name}" verwijderd.`);
     };
     side.replaceChildren(section('Dataset bewerken',
       el('label', { class: 'field' }, el('span', {}, 'Naam'), name),
@@ -318,6 +334,11 @@ export function createDemoStudio(ctx) {
     const rec = st.meta.recording;
     return section('Opnemen',
       el('button', { class: `demo-recbtn${rec ? ' on' : ''}`, disabled: !st.meta.open, onclick: rec ? stop : start }, el('i'), rec ? 'Stop opname' : 'Opname starten'),
+      el('button', { class: 'demo-shotbtn', disabled: !st.meta.open, onclick: shoot }, icon('photo_camera'), 'Screenshot maken'),
+      st.shot && el('div', { class: 'demo-shot' },
+        el('img', { src: `/assets/clips/${encodeURIComponent(st.shot.clip)}`, alt: '' }),
+        el('div', {}, el('p', { class: 'hint' }, `Bewaard als ${st.shot.clip} bij je media.`),
+          el('button', { class: 'ghost', onclick: () => applyShot(st.shot) }, icon('add'), 'In deze video zetten'))),
       el('p', { class: 'demo-counts', id: 'demo-counts' }),
       el('p', { class: 'hint' }, rec ? 'Alles wat je nu doet komt in de opname, met de tijd waarop je het deed.' : 'Je tikken, swipes en getypte tekst worden vastgelegd en komen als tikken in je video.'));
   }
@@ -349,9 +370,29 @@ export function createDemoStudio(ctx) {
       st.result = await api('/api/demo/record', { method: 'POST', body: JSON.stringify({ action: 'stop' }) });
       st.meta.recording = false; clearInterval(st.timer); $('#demo-rec').hidden = true;
       await loadState(); // the clip is in the media pool now
+      ctx.addToVideo?.([st.result.clip], true);
       st.shift = st.result.sync || 0; st.useTaps = true;
       paintSide();
     });
+  }
+
+  const shoot = () => withBusy('Screenshot maken…', async () => {
+    st.shot = await api('/api/demo/screenshot', { method: 'POST', body: '{}' });
+    await loadState(); // the image is in the media pool now
+    ctx.addToVideo?.([st.shot.clip], true);
+    toast('Screenshot bewaard bij je media.'); paintSide();
+  });
+  // Puts the screenshot in the video at the playhead for 3 seconds, like a dropped image.
+  function applyShot(shot) {
+    if (!V()) return toast('Open eerst een video.');
+    const start = round(Math.max(0, S.t)), dur = 3;
+    commit(v => {
+      v.clips.push({ src: shot.clip, start, dur, media: 0 });
+      v.clips.sort((a, b) => a.start - b.start);
+      if (start + dur > (v.end ?? 12.6) - 0.2) { const tail = (v.dur ?? 15) - (v.end ?? 12.6); v.end = round(start + dur + 0.4); v.dur = round(v.end + tail); }
+    });
+    renderAll(); select({ kind: 'clips', i: V().clips.findIndex(c => c.src === shot.clip && c.start === start) }, false);
+    toast('Screenshot in de video gezet.');
   }
 
   // ---- what came out ----
