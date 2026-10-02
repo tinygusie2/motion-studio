@@ -7,7 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickValue, typingPlan } from './demo.mjs';
+import { pickValue, typingPlan, eventTime } from './demo.mjs';
 import { parseTouchDevices, createTouchParser } from './touch.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -186,11 +186,11 @@ export class AndroidDemo {
   async input(ev) {
     const { x = 0, y = 0 } = ev;
     this.hotUntil = Date.now() + 3000; this.dirty = true;
-    if (ev.type === 'down') this.g = { t: Date.now(), x, y, lx: x, ly: y };
+    if (ev.type === 'down') this.g = { t: eventTime(ev), x, y, lx: x, ly: y };
     else if (ev.type === 'move' && this.g) { this.g.lx = x; this.g.ly = y; }
     else if (ev.type === 'up' && this.g) {
       const g = this.g; this.g = null;
-      const ex = ev.x ?? g.lx, ey = ev.y ?? g.ly, dur = Math.max(60, Date.now() - g.t), dist = Math.hypot(ex - g.x, ey - g.y);
+      const ex = ev.x ?? g.lx, ey = ev.y ?? g.ly, dur = Math.max(60, eventTime(ev) - g.t), dist = Math.hypot(ex - g.x, ey - g.y);
       const start = Date.now();
       if (dist < 10) {
         if (dur > 500) await this.shell('input', 'swipe', this.px(g.x), this.px(g.y), this.px(g.x), this.px(g.y), Math.min(dur, 3000));

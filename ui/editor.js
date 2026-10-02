@@ -8,7 +8,7 @@ import { starters, starterSpec } from '/lib/starters.mjs';
 import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
 import { headIns, headOuts, headInOf, headOutOf, outros, outroOf } from '/lib/headfx.mjs';
 import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
-import { sceneTimeline, deviceOf, sceneTransitions, sceneTrOf, sceneTrDur } from '/lib/template.mjs';
+import { mediaOf, sceneTimeline, deviceOf, sceneTransitions, sceneTrOf, sceneTrDur } from '/lib/template.mjs';
 import { autoDropdowns, dropdownExtras, menubar } from '/ui/widgets.js';
 import { installTranslations, tr } from '/ui/i18n.js';
 const $ = s => document.querySelector(s);
@@ -722,15 +722,72 @@ function filterAdd() {
   }
   $('#add-none').hidden = !!first;
 }
+// Each video shows its own media; files from elsewhere come in through "Importeren".
+const ownMedia = () => (V() ? new Set(mediaOf(V())) : null);
+const libClips = () => { const own = ownMedia(); return own ? S.clips.filter(n => own.has(n)) : S.clips; };
+const libAudio = () => { const own = ownMedia(); return own ? S.audio.filter(n => own.has(n)) : S.audio; };
+// Adds files to this video's media without placing them.
+function addToVideo(names, quiet) {
+  if (!V() || !names.length) return;
+  commit(v => { v.media = [...new Set([...(v.media || []), ...names])]; }, { quiet });
+}
+// Takes a file out of this video (out of the timeline too); the file itself stays for other videos.
+function removeFromVideo(kind, name) {
+  const v = V(); if (!v) return;
+  const placed = kind === 'clips' ? [...(v.clips || []), ...(v.clips2 || [])].some(c => c.src === name) : v.audio === name || v.music?.src === name;
+  if (placed && !confirm(`"${name}" zit in de tijdlijn van deze video. Daar ook weghalen?`)) return;
+  commit(v => {
+    v.media = (v.media || []).filter(n => n !== name);
+    if (kind === 'clips') for (const k of ['clips', 'clips2']) v[k] = (v[k] || []).filter(c => c.src !== name);
+    else { if (v.audio === name) { delete v.audio; delete v.audioVol; } if (v.music?.src === name) delete v.music; }
+  });
+  toast(`"${name}" uit deze video gehaald. Het bestand blijft bewaard.`);
+}
+function openImport() {
+  if (!V()) return toast('Open eerst een video.');
+  const own = ownMedia(), kind = S.mediaTab === 'audio' ? 'audio' : 'clips', pool = kind === 'audio' ? S.audio : S.clips;
+  const others = S.list.filter(x => x.id !== S.id);
+  const everywhere = new Set([...mediaOf(V()), ...others.flatMap(x => x.media || [])]);
+  const sources = [...others.map(x => [x.id, x.id]), ['', 'Niet in een video'], ['*', 'Alle media van het project']];
+  let from = others.find(x => (x.media || []).some(n => pool.includes(n) && !own.has(n)))?.id ?? '';
+  const picked = new Set();
+  const grid = el('div', { class: 'import-grid' }), label = el('span', {}, 'Importeren');
+  const go = el('button', { class: 'primary', disabled: true }, icon('download'), label);
+  const namesFor = id => pool.filter(n => !own.has(n) && (id === '*' ? true : id === '' ? !everywhere.has(n) : (others.find(x => x.id === id)?.media || []).includes(n)));
+  const paintGrid = () => {
+    const names = namesFor(from);
+    go.disabled = !picked.size; label.textContent = picked.size ? `${picked.size} importeren` : 'Importeren';
+    grid.replaceChildren(...(names.length ? names.map(n => {
+      const img = kind === 'clips' && isImage(n), url = `/assets/${kind === 'clips' ? 'clips' : 'vo'}/${encodeURIComponent(n)}`;
+      const thumb = kind === 'audio' ? el('span', { class: 'imp-audio' }, icon('graphic_eq'))
+        : img ? el('img', { src: url, alt: '', loading: 'lazy' }) : el('video', { src: `${url}#t=1.2`, muted: true, preload: 'metadata' });
+      return el('button', { class: `imp-item${picked.has(n) ? ' on' : ''}`, title: n, onclick: () => { picked.has(n) ? picked.delete(n) : picked.add(n); paintGrid(); } },
+        thumb, el('span', {}, n.replace(/\.\w+$/, '')), el('i', {}, icon('check')));
+    }) : [el('p', { class: 'hint' }, kind === 'audio' ? 'Geen audio om te importeren.' : 'Geen clips om te importeren.')]));
+  };
+  const dlg = el('dialog', { class: 'import-media' });
+  const pick = el('select', {}, ...sources.map(([v, l]) => el('option', { value: v }, l)));
+  pick.value = from; pick.onchange = () => { from = pick.value; picked.clear(); paintGrid(); };
+  go.onclick = () => { const names = [...picked]; dlg.close(); addToVideo(names); toast(`${names.length} ${names.length > 1 ? 'bestanden' : 'bestand'} geïmporteerd in ${S.id}.`); };
+  dlg.append(
+    el('div', { class: 'pv-head' }, el('h2', {}, kind === 'audio' ? 'Audio importeren' : 'Clips importeren'), el('button', { class: 'ghost icon', title: 'Sluiten (Esc)', onclick: () => dlg.close() }, icon('close'))),
+    el('label', { class: 'field' }, el('span', {}, 'Uit'), pick),
+    grid,
+    el('div', { class: 'pv-actions' }, el('span', { class: 'hint' }, 'Het bestand wordt gedeeld, niet gekopieerd.'), el('button', { onclick: () => dlg.close() }, 'Annuleren'), go));
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener('close', () => dlg.remove());
+  document.body.append(dlg); dlg.showModal(); paintGrid();
+}
 function renderLibrary() {
   const q = ($('#media-q')?.value || '').trim().toLowerCase();
   const match = name => !q || name.toLowerCase().includes(q);
   const tab = S.mediaTab || 'clips';
   for (const b of document.querySelectorAll('.media-tabs button')) {
     b.classList.toggle('on', b.dataset.tab === tab);
-    b.querySelector('b').textContent = (b.dataset.tab === 'clips' ? S.clips : S.audio).length || '';
+    b.querySelector('b').textContent = (b.dataset.tab === 'clips' ? libClips() : libAudio()).length || '';
   }
-  const lib = $('.lib-switch [data-lib="media"] b'); if (lib) lib.textContent = S.clips.length + S.audio.length || '';
+  const lib = $('.lib-switch [data-lib="media"] b'); if (lib) lib.textContent = libClips().length + libAudio().length || '';
+  $('#media-import').disabled = !V();
   $('#media-unused').classList.toggle('on', !!S.mediaUnused);
   $('#media-size').classList.toggle('on', S.mediaBig === true);
   $('#clip-list').style.setProperty('--thumb', S.mediaBig ? '150px' : '96px');
@@ -739,14 +796,14 @@ function renderLibrary() {
   // "Unused": only files that are not in this video yet.
   const inVideo = new Set([...(V()?.clips || []), ...(V()?.clips2 || [])].map(c => c.src).concat([V()?.audio, V()?.music?.src]));
   const keep = name => match(name) && !(S.mediaUnused && inVideo.has(name));
-  if (tab === 'clips') renderClips(S.clips.filter(keep), q || (S.mediaUnused ? 'ongebruikt' : '')); else renderAudio(S.audio.filter(keep), q || (S.mediaUnused ? 'ongebruikt' : ''));
+  if (tab === 'clips') renderClips(libClips().filter(keep), q || (S.mediaUnused ? 'ongebruikt' : '')); else renderAudio(libAudio().filter(keep), q || (S.mediaUnused ? 'ongebruikt' : ''));
 }
 function emptyDrop(ic, text) {
   return el('button', { class: 'media-empty', onclick: () => $('#upload').click() }, icon(ic), el('span', {}, text));
 }
 function renderClips(names, q) {
   const box = $('#clip-list');
-  if (!S.clips.length) return box.replaceChildren(emptyDrop('video_library', 'Sleep schermopnames of screenshots hierheen, of klik om te uploaden'));
+  if (!libClips().length) return box.replaceChildren(emptyDrop('video_library', V() && S.clips.length ? 'Deze video heeft nog geen clips. Sleep ze hierheen, klik om te uploaden, of importeer ze uit een andere video.' : 'Sleep schermopnames of screenshots hierheen, of klik om te uploaden'));
   if (!names.length) return box.replaceChildren(el('p', { class: 'hint media-none' }, `Geen clips met "${q}"`));
   const used = new Set([...(V()?.clips || []), ...(V()?.clips2 || [])].map(c => c.src));
   const screen = screenOf();
@@ -784,7 +841,8 @@ function renderClips(names, q) {
       card,
       el('div', { class: 'clip-meta' },
         el('span', { class: 'nm', title: name }, name.replace(/\.\w+$/, '')),
-        el('button', { class: 'clip-del ghost icon', title: 'Bestand verwijderen', onclick: () => deleteAsset('clips', name) }, icon('delete'))));
+        V() ? el('button', { class: 'clip-del ghost icon', title: 'Uit deze video halen (het bestand blijft bewaard)', onclick: () => removeFromVideo('clips', name) }, icon('remove_circle')) : null,
+        el('button', { class: 'clip-del ghost icon', title: 'Bestand verwijderen uit het project', onclick: () => deleteAsset('clips', name) }, icon('delete'))));
     wrap.addEventListener('dragstart', e => {
       e.dataTransfer.setData('application/x-ms-clip', name);
       e.dataTransfer.effectAllowed = 'copy';
@@ -837,7 +895,7 @@ function previewAsset(kind, name) {
 }
 function renderAudio(names, q) {
   const box = $('#audio-list');
-  if (!S.audio.length) return box.replaceChildren(emptyDrop('library_music', 'Sleep muziek of een opname hierheen (wav, mp3, m4a), of klik om te uploaden'));
+  if (!libAudio().length) return box.replaceChildren(emptyDrop('library_music', V() && S.audio.length ? 'Deze video heeft nog geen audio. Sleep het hierheen, klik om te uploaden, of importeer het uit een andere video.' : 'Sleep muziek of een opname hierheen (wav, mp3, m4a), of klik om te uploaden'));
   if (!names.length) return box.replaceChildren(el('p', { class: 'hint media-none' }, `Geen audio met "${q}"`));
   box.replaceChildren(...names.map(audioItem));
 }
@@ -1582,7 +1640,8 @@ function audioItem(a) {
     el('div', { class: 'au-actions' },
       v ? el('button', { class: 'ghost icon', title: 'Als muziek onder de video', onclick: () => { commit(v => { v.music = { ...(v.music || {}), src: a, media: 0 }; delete v.music.dur; }); select({ kind: 'music', i: 0 }); } }, icon('queue_music')) : null,
       v ? el('button', { class: 'ghost icon', title: 'Als stem / audiospoor', onclick: () => { commit(v => { v.audio = a; }); select({ kind: 'audio', i: 0 }); } }, icon('record_voice_over')) : null,
-      el('button', { class: 'ghost icon danger', title: 'Bestand verwijderen', onclick: () => deleteAsset('vo', a) }, icon('delete'))));
+      v ? el('button', { class: 'ghost icon', title: 'Uit deze video halen (het bestand blijft bewaard)', onclick: () => removeFromVideo('vo', a) }, icon('remove_circle')) : null,
+      el('button', { class: 'ghost icon danger', title: 'Bestand verwijderen uit het project', onclick: () => deleteAsset('vo', a) }, icon('delete'))));
   row.addEventListener('dragstart', e => {
     e.dataTransfer.setData('application/x-ms-audio', a);
     e.dataTransfer.effectAllowed = 'copy';
@@ -2719,7 +2778,7 @@ function wireDialogs() {
 // ---------- demo studio (ui/demo.js) ----------
 let demoStudio = null;
 function openDemo() {
-  demoStudio ??= createDemoStudio({ S, api, el, icon, toast, V, round, commit, renderAll, select, loadState, flushSave, layoutOf: () => (V() ? layoutOf() : 'phone') });
+  demoStudio ??= createDemoStudio({ S, api, el, icon, toast, V, round, commit, renderAll, select, loadState, flushSave, addToVideo, layoutOf: () => (V() ? layoutOf() : 'phone') });
   return demoStudio.open();
 }
 
@@ -2781,7 +2840,7 @@ function wirePanels() {
 
 // ---------- uploads ----------
 async function upload(files) {
-  let kind = null;
+  let kind = null; const added = [];
   for (const f of files) {
     toast(`Uploaden en omzetten: ${f.name}…`);
     try {
@@ -2789,12 +2848,13 @@ async function upload(files) {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
       toast(`${data.name} toegevoegd`);
-      kind = data.kind;
+      kind = data.kind; added.push(data.name);
     } catch (e) { toast(`Upload mislukt: ${e.message}`, true); }
   }
   S.thumbs = {}; S.media = {}; // a re-uploaded clip keeps its name but has new frames
   if (kind) S.mediaTab = kind === 'audio' ? 'audio' : 'clips'; // show what was just added
   await loadState();
+  addToVideo(added, true); // an upload belongs to the video that is open
   renderTimeline();
 }
 
@@ -2888,6 +2948,7 @@ function init() {
   document.querySelectorAll('.lib-switch button').forEach(b => (b.onclick = () => setLibPane(b.dataset.lib)));
   try { S.mediaBig = localStorage.getItem('ms-media-big') === '1'; } catch {}
   setLibPane((() => { try { return localStorage.getItem('ms-lib-pane'); } catch { return null; } })() || 'add');
+  $('#media-import').onclick = openImport;
   $('#media-unused').onclick = () => { S.mediaUnused = !S.mediaUnused; renderLibrary(); };
   $('#media-size').onclick = () => { S.mediaBig = !S.mediaBig; try { localStorage.setItem('ms-media-big', S.mediaBig ? '1' : '0'); } catch {} renderLibrary(); };
   $('#add-q').addEventListener('input', filterAdd);

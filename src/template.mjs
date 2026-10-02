@@ -95,6 +95,12 @@ export function sceneTimeline(v) {
 }
 
 // Fills in defaults so partially edited specs still build.
+// The media files a video has: what it uses, plus what was added to it (`media`) and not placed yet.
+export function mediaOf(v) {
+  const names = [...(v.clips || []), ...(v.clips2 || [])].map(c => c.src).concat(v.audio, v.music?.src, v.media || []);
+  return [...new Set(names.filter(Boolean))];
+}
+
 export function normalize(v) {
   const out = { overline: '', tagline: '', heads: [], clips: [], clips2: [], chips: [], zooms: [], subs: [], taps: [], ...v };
   out.heads = [...out.heads].sort((a, b) => a.t - b.t);

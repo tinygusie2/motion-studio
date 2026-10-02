@@ -2,7 +2,8 @@
 // gives one page to drive. Used to show and record an app in a demo (src/demo-web.mjs). No dependencies: Node has a
 // WebSocket of its own.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -71,7 +72,15 @@ export async function launchBrowser({ exe, extraArgs = [] } = {}) {
   const child = spawn(exe, args, { stdio: 'ignore', windowsHide: true, env });
   const onExit = () => { try { child.kill(); } catch {} };
   process.once('exit', onExit); // the browser must not outlive the app
-  const cleanup = () => { process.off('exit', onExit); try { child.kill(); } catch {} setTimeout(() => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }), 500); };
+  // The throwaway profile goes once the browser has really stopped; Chrome's helper processes can hold its files a while
+  // longer on a busy PC, so the removal retries, and a folder that stays behind in temp is not an error.
+  const removeProfile = () => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }).catch(() => {});
+  const cleanup = () => {
+    process.off('exit', onExit);
+    if (child.exitCode != null || child.signalCode != null) return void removeProfile();
+    child.once('exit', () => setTimeout(removeProfile, 300));
+    try { child.kill(); } catch { removeProfile(); }
+  };
   let dead = null;
   child.on('error', e => { dead = e; });
   child.on('exit', code => { dead ??= new Error(`De browser stopte direct (code ${code}).`); });

@@ -8,7 +8,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSy
 import { homedir, tmpdir } from 'node:os';
 import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { layouts, formats, transitions, normalize, defaultTheme, defaultChipColors } from './template.mjs';
+import { layouts, formats, transitions, normalize, mediaOf, defaultTheme, defaultChipColors } from './template.mjs';
 import { toSrt, wordsFromWhisper, subsFromWords } from './captions.mjs';
 import { createDemoManager } from './demo-session.mjs';
 import { parseSilences, silenceLevels, speechSegments, mapFromSegments } from './silence.mjs';
@@ -177,7 +177,19 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         job.span = [span[0] + (span[1] - span[0]) * k / fmts.length, span[0] + (span[1] - span[0]) * (k + 1) / fmts.length];
         job.step = { ...job.step, i: k, n: fmts.length, format: f };
       }
-      const dir = w.writeProject(v, f), name = w.renderName(v, f), out = join(w.p.renders, name);
+      const dir = w.writeProject(v, f);
+      let name = w.renderName(v, f), out = join(w.p.renders, name);
+      // Windows cannot replace a file another program has open (a player, the preview): the finished render would
+      // fail at the very end. Moving it away and back tells whether it is free; if not, render under a free name.
+      if (existsSync(out)) {
+        try { renameSync(out, `${out}.check`); renameSync(`${out}.check`, out); }
+        catch {
+          const base = name.replace(/\.mp4$/, '');
+          let n = 2; while (existsSync(join(w.p.renders, `${base}-${n}.mp4`))) n++;
+          log(`${name} is nog open in een ander programma, dus die kan niet overschreven worden. Deze render wordt ${base}-${n}.mp4.`);
+          name = `${base}-${n}.mp4`; out = join(w.p.renders, name);
+        }
+      }
       log(`Renderen naar ${name} (${f})…`);
       // A stopped render can leave half a file behind: remove it, but never an earlier finished render.
       try { await run('npx', ['--yes', hf, 'render', dir, '-o', `../renders/${name}`], { cwd: w.p.projects }, log, job?.track); }
@@ -419,7 +431,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
     return {
       ...base,
       workspace: { path: ws.root, ...ws.config },
-      videos: ws.specs().map(v => ({ id: v.id, overline: v.overline, brand: v.brand || null, dur: v.dur ?? 15, formats: ws.formatsOf(v) })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })),
+      videos: ws.specs().map(v => ({ id: v.id, media: mediaOf(v), overline: v.overline, brand: v.brand || null, dur: v.dur ?? 15, formats: ws.formatsOf(v) })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })),
       clips: ws.files(ws.p.clips, ['.mp4', '.webm', ...IMAGE_EXT]),
       clipAudio: Object.fromEntries(ws.files(ws.p.clips, ['.mp4', '.webm']).map(f => [f, hasAudio(f)])),
       silenceLevels,
@@ -542,6 +554,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         if (kind === 'fonts' && ['google-sans-flex-latin.woff2', 'material-symbols.woff2'].includes(name)) return send(res, 400, { error: 'Dit lettertype hoort bij Motion Studio zelf en kan niet weg.' });
         const unlinkVideo = v => {
           let hit = false;
+          if (v.media?.includes(name)) { v.media = v.media.filter(n => n !== name); hit = true; }
           if (kind === 'clips') for (const k of ['clips', 'clips2']) { const n = (v[k] || []).length; v[k] = (v[k] || []).filter(c => c.src !== name); hit ||= v[k].length !== n; }
           if (kind === 'vo') {
             if (v.audio === name) { delete v.audio; delete v.audioVol; hit = true; }
