@@ -10,7 +10,8 @@
     "repo": "tinygusie2/motion-studio",
     "asset": "^Motion-Studio-.*-win-x64\\.zip$",
     "checksums": "SHA256SUMS.txt",
-    "exe": "Motion Studio.exe"
+    "exe": "Motion Studio.exe",
+    "mac": { "asset": "^Motion-Studio-.*-mac-universal\\.zip$", "exe": "Motion Studio.app" }
   },
   {
     "id": "visual",

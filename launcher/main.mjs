@@ -2,9 +2,10 @@
 // starts them. Extra editors can be added without a new launcher build in %APPDATA%\Motion Launcher\apps.json.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Store, cleanup, compareVersions, findExisting, install, installedExe, latestRelease, launch } from './updater.mjs';
+import { Store, cleanup, compareVersions, findExisting, forPlatform, install, installedExe, latestRelease, launch } from './updater.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const smoke = process.argv.includes('--smoke-test');
@@ -27,7 +28,7 @@ function loadApps() {
     if (at < 0) at = list.findIndex(a => a.placeholder && !a.comingSoon);
     if (at >= 0) list[at] = extra; else list.push(extra);
   }
-  return list.map(a => ({ ...a, name: loc(a.name), description: loc(a.description) }));
+  return list.map(a => forPlatform(a)).filter(Boolean).map(a => ({ ...a, name: loc(a.name), description: loc(a.description) }));
 }
 // Start menu shortcuts, so Windows Search finds the launcher and every app it installed. An app's shortcut points at its
 // installed version, so it is written again after each update.
@@ -42,7 +43,9 @@ function appShortcut(a) {
   if (info) shortcut(a.name, installedExe(root, a, info), a.description);
 }
 // The exes behind the Start menu and desktop shortcuts, for finding editors that were installed without the launcher.
+// On a Mac: the .app bundles in /Applications and ~/Applications.
 function shortcutTargets() {
+  if (process.platform === 'darwin') return apps.flatMap(a => [join('/Applications', a.exe), join(homedir(), 'Applications', a.exe)]);
   if (process.platform !== 'win32') return [];
   const dirs = [startMenu(), join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'), app.getPath('desktop')];
   const out = [];

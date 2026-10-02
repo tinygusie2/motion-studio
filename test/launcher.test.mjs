@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { crc32 } from 'node:zlib';
-import { Store, cleanup, compareVersions, findExisting, install, installedExe, latestRelease, parseChecksums } from '../launcher/updater.mjs';
+import { Store, cleanup, compareVersions, findExisting, forPlatform, install, installedExe, latestRelease, parseChecksums } from '../launcher/updater.mjs';
 
 // A zip with stored (uncompressed) entries: { 'path/in/zip': 'content' }.
 function zip(files) {
@@ -140,6 +140,27 @@ test('cleanup never removes a folder with projects in it', () => {
   process.env.MOTION_STUDIO_SETTINGS = settings;
   try { cleanup(app, { root, store }); } finally { delete process.env.MOTION_STUDIO_SETTINGS; }
   assert.deepEqual(new Set(readdirSync(demo)), new Set(['1.0.0', '2.0.0', '3.0.0']));
+});
+
+test('forPlatform: a Mac gets the mac asset and .app, an app without a Mac build is left out there', () => {
+  const ms = { id: 'ms', asset: '-win-x64', exe: 'MS.exe', mac: { asset: '-mac-universal', exe: 'MS.app' } };
+  assert.equal(forPlatform(ms, 'win32'), ms);
+  assert.deepEqual([forPlatform(ms, 'darwin').asset, forPlatform(ms, 'darwin').exe], ['-mac-universal', 'MS.app']);
+  assert.equal(forPlatform({ id: 'v', exe: 'V.exe' }, 'darwin'), null);
+  const real = JSON.parse(readFileSync(new URL('../launcher/apps.json', import.meta.url), 'utf8'));
+  assert.ok(new RegExp(forPlatform(real[0], 'darwin').asset).test('Motion-Studio-1.3.0-mac-universal.zip'));
+});
+
+test('findExisting reads the version of an .app bundle', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ml-mac-'));
+  try {
+    const bundle = join(dir, 'MS.app');
+    mkdirSync(join(bundle, 'Contents', 'Resources', 'app'), { recursive: true });
+    writeFileSync(join(bundle, 'Contents', 'Resources', 'app', 'package.json'), JSON.stringify({ version: '1.3.0' }));
+    const found = findExisting({ id: 'ms', exe: 'MS.app' }, [bundle]);
+    assert.equal(found.version, '1.3.0');
+    assert.equal(found.path, dir);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('findExisting adopts a copy installed without the launcher, with its version', () => {
