@@ -140,3 +140,11 @@ test('backgrounds: the video starts with its own style, changes crossfade, unkno
   assert.ok(!html.includes('id="bgl-aurora"'), 'only the styles in use are in the page');
   assert.ok(build(video(), brand, '9:16').includes('id="bgl-orbit" class="bgl" style="opacity:1"'));
 });
+
+test('build: letter effects on headlines are driven by the timeline', () => {
+  const html = build(video({ heads: [{ t: 0, text: 'Hello', fxIn: 'type' }, { t: 2, text: 'World', fxIn: 'scramble' }] }), brand);
+  assert.match(html, /"chars":"type"/);
+  assert.match(html, /"chars":"scramble"/);
+  assert.match(html, /if \(fin\.chars\) charIn\(/);
+  assert.match(html, /tl.fromTo\(driver\(draw\)/);
+});
