@@ -130,6 +130,18 @@ test('cleanup removes stray folders but leaves the current and previous version'
   assert.deepEqual(new Set(readdirSync(join(root, 'apps/demo'))), new Set(['1.0.0', '2.0.0']));
 });
 
+test('cleanup never removes a folder with projects in it', () => {
+  const root = join(home, 'keep'), store = new Store(root), demo = join(root, 'apps/demo');
+  store.setInstalled('demo', { version: '3.0.0' });
+  for (const d of ['1.0.0/videos', '2.0.0/deep/work', '2.5.0', '3.0.0']) mkdirSync(join(demo, d), { recursive: true });
+  writeFileSync(join(demo, '1.0.0/videos/studio.json'), '{}');
+  const settings = join(home, 'ms-settings.json');
+  writeFileSync(settings, JSON.stringify({ recents: [join(demo, '2.0.0/deep/work')] }));
+  process.env.MOTION_STUDIO_SETTINGS = settings;
+  try { cleanup(app, { root, store }); } finally { delete process.env.MOTION_STUDIO_SETTINGS; }
+  assert.deepEqual(new Set(readdirSync(demo)), new Set(['1.0.0', '2.0.0', '3.0.0']));
+});
+
 test('findExisting adopts a copy installed without the launcher, with its version', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ml-found-'));
   try {

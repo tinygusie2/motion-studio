@@ -4,7 +4,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -147,6 +148,7 @@ export async function install(app, release, { root, store, onProgress = () => {}
     if (!existsSync(join(content, app.exe))) throw new Error(`${app.exe} not found in ${release.zip.name}`);
 
     const target = join(dir, release.version);
+    if (holdsProjects(target)) throw new Error(`${target} contains projects; move them out of the app folder before reinstalling ${release.version}`);
     rmSync(target, { recursive: true, force: true });
     renameSync(content, target);
 
@@ -163,15 +165,36 @@ export async function install(app, release, { root, store, onProgress = () => {}
   }
 }
 
+// Projects the editors know (Motion Studio's list in ~/.motion-studio). `MOTION_STUDIO_SETTINGS` points elsewhere (tests).
+function knownProjects() {
+  const file = process.env.MOTION_STUDIO_SETTINGS || join(homedir(), '.motion-studio', 'settings.json');
+  try { const s = JSON.parse(readFileSync(file, 'utf8')); return [s.workspace, ...(s.recents || [])].filter(Boolean).map(p => resolve(p)); } catch { return []; }
+}
+
+// True when a folder holds someone's work: a Motion Studio project (studio.json) somewhere inside, or a project from
+// the editor's list. Such a folder is never removed, even when it sits where an old version used to be.
+export function holdsProjects(dir) {
+  const base = resolve(dir).toLowerCase() + sep;
+  if (knownProjects().some(p => (p.toLowerCase() + sep).startsWith(base))) return true;
+  const walk = (d, depth) => {
+    let entries;
+    try { entries = readdirSync(d, { withFileTypes: true }); } catch { return false; }
+    if (entries.some(e => e.isFile() && e.name === 'studio.json')) return true;
+    return depth > 0 && entries.some(e => e.isDirectory() && e.name !== 'node_modules' && walk(join(d, e.name), depth - 1));
+  };
+  return walk(dir, 5);
+}
+
 // Removes every version folder except the installed one and the one before it, plus leftovers of broken downloads.
-// A folder that is still in use (that version is running) stays and is tried again next time.
+// A folder that is still in use (that version is running) stays and is tried again next time; one with projects in it
+// always stays.
 export function cleanup(app, { root, store }) {
   const dir = appDir(root, app.id);
   if (!existsSync(dir)) return;
   const info = store.installed(app.id);
   const keep = new Set([info?.version, info?.previous].filter(Boolean));
   for (const name of readdirSync(dir)) {
-    if (keep.has(name)) continue;
+    if (keep.has(name) || holdsProjects(join(dir, name))) continue;
     try { rmSync(join(dir, name), { recursive: true, force: true, maxRetries: 2 }); } catch {}
   }
 }
