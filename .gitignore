@@ -4,3 +4,4 @@ dist/
 *.pfx
 *.p12
 *.cer
+*.icns

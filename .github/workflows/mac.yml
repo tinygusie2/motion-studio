@@ -1,0 +1,93 @@
+name: Mac build
+
+# Builds the universal (Intel + Apple Silicon) Mac apps, checks that they start, and adds them to existing releases
+# together with their line in SHA256SUMS.txt. A Mac build has to be made on a Mac: the Electron framework inside an
+# .app needs symlinks and permissions that a zip made on Windows loses.
+on:
+  workflow_dispatch:
+    inputs:
+      studio_tag:
+        description: Motion Studio release to add the Mac build to (e.g. v1.3.0), empty to skip
+        required: false
+      launcher_tag:
+        description: Motion Launcher release to add the Mac build to (e.g. launcher-v1.2.0), empty to skip
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # .icns icons from the 256 px PNGs.
+      - name: Icons
+        run: |
+          icns() {
+            set=$(mktemp -d)/icon.iconset; mkdir -p "$set"
+            for s in 16 32 64 128 256; do sips -z $s $s "$1" --out "$set/icon_${s}x${s}.png" >/dev/null; done
+            for s in 16 32 64 128; do cp "$set/icon_$((s*2))x$((s*2)).png" "$set/icon_${s}x${s}@2x.png"; done
+            iconutil -c icns "$set" -o "$2"
+          }
+          icns resources/icon.png resources/icon.icns
+          icns launcher/icons/launcher.png launcher/icons/launcher.icns
+
+      # Not notarized: the apps are signed ad hoc (Apple Silicon refuses to run unsigned code), so macOS asks once
+      # whether to open an app downloaded in a browser.
+      - name: Motion Studio
+        if: inputs.studio_tag != ''
+        run: |
+          npm run pack:mac
+          app="dist/Motion Studio-darwin-universal/Motion Studio.app"
+          codesign --force --deep --sign - "$app"
+          home=$(mktemp -d)
+          HOME="$home" node scripts/smoke-project.mjs "$home/project"
+          HOME="$home" "$app/Contents/MacOS/Motion Studio" --smoke-test studio.png
+          version=$(node -p "require('./package.json').version")
+          test "v$version" = "${{ inputs.studio_tag }}" || { echo "package.json is $version, the tag is ${{ inputs.studio_tag }}"; exit 1; }
+          zip="Motion-Studio-$version-mac-universal.zip"
+          ditto -c -k --keepParent "$app" "$zip"
+          echo "STUDIO_ZIP=$zip" >> "$GITHUB_ENV"
+
+      - name: Motion Launcher
+        if: inputs.launcher_tag != ''
+        run: |
+          npm run pack:launcher:mac
+          app="dist/Motion Launcher-darwin-universal/Motion Launcher.app"
+          codesign --force --deep --sign - "$app"
+          MOTION_LAUNCHER_HOME=$(mktemp -d) "$app/Contents/MacOS/Motion Launcher" --smoke-test launcher.png
+          version=$(node -p "require('./launcher/package.json').version")
+          test "launcher-v$version" = "${{ inputs.launcher_tag }}" || { echo "launcher is $version, the tag is ${{ inputs.launcher_tag }}"; exit 1; }
+          zip="Motion-Launcher-$version-mac-universal.zip"
+          ditto -c -k --keepParent "$app" "$zip"
+          echo "LAUNCHER_ZIP=$zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: '*.png'
+
+      # Adds the zip and its checksum line (replacing an older line for the same file) to the release.
+      - name: Publish
+        run: |
+          publish() {
+            tag=$1; zip=$2; [ -n "$tag" ] && [ -n "$zip" ] || return 0
+            rm -f SHA256SUMS.txt
+            gh release download "$tag" -p SHA256SUMS.txt || touch SHA256SUMS.txt
+            grep -v " \*\?$zip\$" SHA256SUMS.txt > sums.tmp || true
+            shasum -a 256 -b "$zip" >> sums.tmp
+            mv sums.tmp SHA256SUMS.txt
+            cat SHA256SUMS.txt
+            gh release upload "$tag" "$zip" SHA256SUMS.txt --clobber
+          }
+          publish "${{ inputs.studio_tag }}" "$STUDIO_ZIP"
+          publish "${{ inputs.launcher_tag }}" "$LAUNCHER_ZIP"

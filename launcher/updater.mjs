@@ -89,11 +89,19 @@ export function parseChecksums(text) {
   return sums;
 }
 
-// Windows' own tar.exe (bsdtar) unpacks zips; Git Bash's GNU tar that may come first on PATH does not.
+// An app as this platform sees it: on a Mac its `mac` block ({ asset, exe: 'Name.app' }) replaces the Windows asset and
+// exe. An app without one has no Mac build and is left out there (null).
+export function forPlatform(app, platform = process.platform) {
+  if (platform !== 'darwin') return app;
+  return app.mac ? { ...app, ...app.mac } : null;
+}
+
+// Windows' own tar.exe (bsdtar) unpacks zips; Git Bash's GNU tar that may come first on PATH does not. On a Mac, ditto
+// keeps the symlinks and permissions an .app bundle needs.
 function extract(zip, dir) {
   const [cmd, args] = process.platform === 'win32'
     ? [join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', zip, '-C', dir]]
-    : ['unzip', ['-q', zip, '-d', dir]];
+    : process.platform === 'darwin' ? ['ditto', ['-x', '-k', zip, dir]] : ['unzip', ['-q', zip, '-d', dir]];
   return new Promise((resolve, reject) => execFile(cmd, args, { windowsHide: true }, err => err ? reject(err) : resolve()));
 }
 
@@ -109,7 +117,9 @@ export function findExisting(app, exes) {
   for (const exe of exes) {
     if (!exe || basename(exe).toLowerCase() !== app.exe.toLowerCase() || !existsSync(exe)) continue;
     let version = '0.0.0';
-    try { version = JSON.parse(readFileSync(join(dirname(exe), 'resources', 'app', 'package.json'), 'utf8')).version || version; } catch {}
+    // An .app bundle keeps the app in Contents/Resources, a Windows build next to the exe in resources.
+    const pkg = exe.toLowerCase().endsWith('.app') ? join(exe, 'Contents', 'Resources', 'app', 'package.json') : join(dirname(exe), 'resources', 'app', 'package.json');
+    try { version = JSON.parse(readFileSync(pkg, 'utf8')).version || version; } catch {}
     return { version, path: dirname(exe), found: true, installedAt: statSync(exe).mtime.toISOString(), verified: false, previous: null };
   }
   return null;
@@ -205,7 +215,9 @@ export function launch(app, { root, store }) {
   if (!info) throw new Error(`${app.name} is not installed`);
   const exe = installedExe(root, app, info);
   if (!existsSync(exe)) throw new Error(`${exe} is missing; install ${app.name} again`);
-  const child = spawn(exe, app.args || [], { cwd: dirname(exe), detached: true, stdio: 'ignore' });
+  // An .app bundle is a folder: macOS starts it through open (-n: a new copy, also when one runs from elsewhere).
+  const [cmd, args] = exe.toLowerCase().endsWith('.app') ? ['open', ['-n', exe, ...(app.args?.length ? ['--args', ...app.args] : [])]] : [exe, app.args || []];
+  const child = spawn(cmd, args, { cwd: dirname(exe), detached: true, stdio: 'ignore' });
   child.unref();
   return child.pid;
 }
