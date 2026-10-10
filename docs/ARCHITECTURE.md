@@ -143,7 +143,7 @@ pause, after a sentence end, or when it gets long). The job returns the blocks; 
 with `commit`, so undo works.
 
 The style comes from `captionDefaults` < `brand.captions` < `video.captions`. It covers:
-- `style` (`pop`, `karaoke`, `box`, `plain`)
+- `style` (`pop`, `karaoke`, `highlighter`, `box`, `plain`)
 - `y` and `size`
 - `words` (per group)
 - `upper` and `outline`

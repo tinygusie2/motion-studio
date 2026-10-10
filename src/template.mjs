@@ -257,7 +257,7 @@ export function build(v, brand, fmt = '9:16') {
   const capMap = FH / H, capSize = F.area ? Math.min(1, capMap * 1.25) : 1;
   const capK = Math.max(2, Math.round(cs.size * capSize * 0.055));
   const capShadow = cs.outline ? [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]].map(([x, y]) => `${Math.round(x * capK)}px ${Math.round(y * capK)}px 0 #000`).join(', ') + `, 0 ${capK}px ${capK * 4}px #000a` : 'none';
-  const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}">${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
+  const captions = capGroups.map((g, i) => `<div id="cap${i}" class="cap"><span class="cap-bg"><span class="cap-line">${g.words.map((w, j) => `<span id="cap${i}-${j}" class="cw${w.em ? ' em' : ''}"><span class="cw-marker"></span>${esc(w.w)}</span>`).join(' ')}</span></span></div>`).join('\n        ');
   // The device comes in at the start with its layout's entrance. A video that opens with only text has none: the device
   // arrives with the transition of the change that brings it in.
   const enter = TEXT0 || layouts[L].enter === 'none' ? '' : layouts[L].enter === 'fade'
@@ -465,6 +465,11 @@ export function build(v, brand, fmt = '9:16') {
             tl.set(w, { color: CAP.hi }, t); tl.set(w, { color: base }, next);
           } else if (CAP.style === 'karaoke') {
             tl.set(w, { opacity: 1, color: CAP.hi }, t); tl.set(w, { color: base }, next);
+          } else if (CAP.style === 'highlighter') {
+            const marker = w.querySelector('.cw-marker');
+            tl.fromTo(marker, { scaleX: 0 }, { scaleX: 1, duration: Math.min(0.22, next - t), ease: 'power1.out', immediateRender: false }, t);
+            tl.set(w, { color: CAP.ink }, t); tl.set(w, { color: base }, next);
+            tl.set(marker, { scaleX: 0 }, next);
           } else if (CAP.style === 'box') {
             tl.set(w, { backgroundColor: CAP.hi, color: CAP.ink, textShadow: 'none', scale: 1.08 }, t);
             tl.set(w, { backgroundColor: 'rgba(0,0,0,0)', color: base, textShadow: CAP.shadow, scale: 1 }, next);
@@ -637,6 +642,9 @@ export function build(v, brand, fmt = '9:16') {
       .cap { position: absolute; left: 0; right: 0; top: 0; height: 0; display: flex; align-items: center; justify-content: center; opacity: 0; }
       .cap-bg { display: block; max-width: 100%; text-align: center; font-size: ${Math.round(cs.size * capSize)}px; font-weight: 820; line-height: 1.14; letter-spacing: -0.02em; color: ${capColor}; text-wrap: balance;${cs.upper ? ' text-transform: uppercase;' : ''} }
       .cw { display: inline-block; padding: 0.02em 0.14em; margin: 0 -0.06em; border-radius: 0.2em; text-shadow: ${capShadow}; }
+      .cw-marker { display: none; }
+      .S-highlighter .cw { position: relative; isolation: isolate; }
+      .S-highlighter .cw-marker { display: block; position: absolute; z-index: -1; inset: 0; border-radius: 0.16em; background: ${capHi}; transform: scaleX(0); transform-origin: left center; }
       .cw.em { color: ${capHi}; }
       .S-pop .cw { opacity: 0; }
       .S-karaoke .cw { opacity: 0.45; }

@@ -24,6 +24,14 @@ test('build: every layout in every format gives a page of the right size', () =>
   }
 });
 
+test('build: highlighter captions sweep behind each timed word and restore the text color', () => {
+  const html = build(video({ captions: { style: 'highlighter' } }), brand, '9:16');
+  assert.match(html, /class="cw-marker"/);
+  assert.match(html, /\.S-highlighter \.cw-marker/);
+  assert.match(html, /scaleX: 1, duration: Math\.min\(0\.22, next - t\)/);
+  assert.match(html, /color: CAP\.ink/);
+});
+
 test('stageFit: 9:16 is the stage itself; other formats put the device box inside their area', () => {
   for (const L of Object.keys(layouts)) assert.equal(stageFit('9:16', L), null);
   for (const [fmt, F] of Object.entries(formats)) {

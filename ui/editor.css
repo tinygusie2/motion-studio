@@ -311,11 +311,12 @@ body.electron #bar button, body.electron #bar select, body.electron #bar input, 
 /* captions */
 .tl-item.k-sub { background: #1c2a33; color: #bfe6ff; border-color: #2a4150; }
 .tl-item.k-sub.off { opacity: .45; border-style: dashed; }
-.layout-grid.cap-styles { grid-template-columns: repeat(4, 1fr); }
+.layout-grid.cap-styles { grid-template-columns: repeat(5, 1fr); }
 .cap-demo { display: flex; align-items: baseline; gap: 1px; font-size: 16px; font-weight: 800; font-style: normal; line-height: 1; padding: 2px 4px; border-radius: 5px; }
 .cap-demo b, .cap-demo i { font-style: normal; font-weight: 800; padding: 1px 2px; border-radius: 4px; }
 .cap-demo.s-pop b { color: var(--accent); transform: scale(1.15); display: inline-block; } .cap-demo.s-pop i { opacity: .25; }
 .cap-demo.s-karaoke b { color: var(--accent); } .cap-demo.s-karaoke i { opacity: .45; }
+.cap-demo.s-highlighter b { background: linear-gradient(transparent 45%, var(--accent) 45%); }
 .cap-demo.s-box b { background: var(--accent); color: #17244a; }
 .cap-demo.s-plain { background: #000a; }
 

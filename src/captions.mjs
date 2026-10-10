@@ -6,12 +6,14 @@
 export const captionStyles = {
   pop: 'Pop',
   karaoke: 'Karaoke',
+  highlighter: 'Markeerstift',
   box: 'Blok',
   plain: 'Klassiek'
 };
 export const captionStyleHints = {
   pop: 'Woorden springen er één voor één in, het gesproken woord licht op.',
   karaoke: 'De hele groep staat er, gesproken woorden kleuren mee.',
+  highlighter: 'Een markeerstreep veegt achter elk gesproken woord.',
   box: 'Het gesproken woord krijgt een gekleurd blok (TikTok-stijl).',
   plain: 'Rustige ondertitel met achtergrond, hele groep in één keer.'
 };
