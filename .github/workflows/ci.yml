@@ -21,6 +21,8 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # The demo tests record and encode clips with ffmpeg, which the Ubuntu runner doesn't have.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run check
       - run: npm test
       # The editor in the runner's Chrome (playwright-core drives the installed browser, nothing to download).
