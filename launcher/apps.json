@@ -11,7 +11,8 @@
     "asset": "^Motion-Studio-.*-win-x64\\.zip$",
     "checksums": "SHA256SUMS.txt",
     "exe": "Motion Studio.exe",
-    "mac": { "asset": "^Motion-Studio-.*-mac-universal\\.zip$", "exe": "Motion Studio.app" }
+    "mac": { "asset": "^Motion-Studio-.*-mac-universal\\.zip$", "exe": "Motion Studio.app" },
+    "linux": { "asset": "^Motion-Studio-.*-linux-x64\\.zip$", "exe": "motion-studio" }
   },
   {
     "id": "visual",

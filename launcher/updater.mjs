@@ -89,11 +89,12 @@ export function parseChecksums(text) {
   return sums;
 }
 
-// An app as this platform sees it: on a Mac its `mac` block ({ asset, exe: 'Name.app' }) replaces the Windows asset and
-// exe. An app without one has no Mac build and is left out there (null).
+// An app as this platform sees it: on a Mac its `mac` block ({ asset, exe: 'Name.app' }) and on Linux its `linux` block
+// ({ asset, exe: 'name' }) replace the Windows asset and exe. An app without that block has no build there (null).
 export function forPlatform(app, platform = process.platform) {
-  if (platform !== 'darwin') return app;
-  return app.mac ? { ...app, ...app.mac } : null;
+  const key = platform === 'darwin' ? 'mac' : platform === 'linux' ? 'linux' : null;
+  if (!key) return app;
+  return app[key] ? { ...app, ...app[key] } : null;
 }
 
 // Windows' own tar.exe (bsdtar) unpacks zips; Git Bash's GNU tar that may come first on PATH does not. On a Mac, ditto

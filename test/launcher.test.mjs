@@ -151,6 +151,14 @@ test('forPlatform: a Mac gets the mac asset and .app, an app without a Mac build
   assert.ok(new RegExp(forPlatform(real[0], 'darwin').asset).test('Motion-Studio-1.3.0-mac-universal.zip'));
 });
 
+test('forPlatform: Linux gets the linux asset and executable, an app without a Linux build is left out there', () => {
+  const ms = { id: 'ms', asset: '-win-x64', exe: 'MS.exe', linux: { asset: '-linux-x64', exe: 'ms' } };
+  assert.deepEqual([forPlatform(ms, 'linux').asset, forPlatform(ms, 'linux').exe], ['-linux-x64', 'ms']);
+  assert.equal(forPlatform({ id: 'v', exe: 'V.exe' }, 'linux'), null);
+  const real = JSON.parse(readFileSync(new URL('../launcher/apps.json', import.meta.url), 'utf8'));
+  assert.ok(new RegExp(forPlatform(real[0], 'linux').asset).test('Motion-Studio-1.3.0-linux-x64.zip'));
+});
+
 test('findExisting reads the version of an .app bundle', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ml-mac-'));
   try {
@@ -172,7 +180,8 @@ test('findExisting adopts a copy installed without the launcher, with its versio
     writeFileSync(join(appDir, 'resources', 'app', 'package.json'), JSON.stringify({ version: '0.1.0' }));
     const a = { id: 'visual', exe: 'Visual.exe' };
     assert.equal(findExisting(a, ['C:\nope\Other.exe', join(dir, 'missing', 'Visual.exe')]), null);
-    const found = findExisting(a, ['C:\nope\Other.exe', join(appDir, 'visual.EXE')]);
+    // Windows and macOS match names regardless of case; Linux file names are case-sensitive.
+    const found = findExisting(a, ['C:\nope\Other.exe', join(appDir, process.platform === 'linux' ? 'Visual.exe' : 'visual.EXE')]);
     assert.equal(found.version, '0.1.0');
     assert.equal(found.path, appDir);
     assert.equal(installedExe(dir, a, found), join(appDir, 'Visual.exe'));

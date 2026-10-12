@@ -11,7 +11,7 @@ music, rendered to MP4 for TikTok, Reels, Shorts, LinkedIn and YouTube.**
 [![CI](https://github.com/tinygusie2/motion-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/tinygusie2/motion-studio/actions/workflows/ci.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-c1ec8a.svg)](CONTRIBUTING.md)
 [![Good first issues](https://img.shields.io/github/issues/tinygusie2/motion-studio/good%20first%20issue?color=ffb77d&label=good%20first%20issues)](https://github.com/tinygusie2/motion-studio/issues?q=is%3Aopen+label%3A%22good+first+issue%22)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows-d7baff.svg)
+![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-d7baff.svg)
 
 <img src="docs/demo.gif" width="300" alt="A video made with Motion Studio" />
 
@@ -92,6 +92,7 @@ On first start, create a project folder (*New project…*), drop a screen record
 | `npm run test:ui` | Editor tests in your installed Chrome or Edge (dragging, trimming, splitting, undo, saving) |
 | `npm run serve` | Run the editor in your normal browser at http://localhost:3400, which is handy for development |
 | `npm run pack` | Build `dist/Motion Studio-win32-x64/Motion Studio.exe` |
+| `npm run pack:linux` | Build `dist/Motion Studio-linux-x64/motion-studio` (on Linux) |
 | `npm run sign` | Sign that `.exe` (see [signing](#signing-on-windows)) |
 | `npm run dist` | `pack` + `sign` |
 | `npm run launcher` / `npm run dist:launcher` | Run / build and sign the launcher (`dist/Motion Launcher-win32-x64`) |
@@ -127,7 +128,7 @@ Everything below is open for grabs. Comment on (or open) an issue so others know
 - 📝 **Docs**: tutorials, a "your first video" guide, GIFs of features
 
 **Bigger features**
-- 🍎 **macOS and Linux builds**: the code is cross-platform, but packaging and testing aren't there yet
+- 🍎 **macOS and Linux testing**: both are built (`pack:mac`, `pack:linux`), but see far less use than Windows
 - 🎙️ **Whisper on macOS and Linux**: Windows installs whisper.cpp by itself, elsewhere it has to be installed by hand
 - 🧪 **More tests**: the modules (`npm test`) and the timeline basics (`npm run test:ui`) are covered; rendering and
   most of the inspector aren't yet

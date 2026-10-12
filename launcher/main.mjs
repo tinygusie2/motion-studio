@@ -1,7 +1,7 @@
 // Motion Launcher: installs the editors listed in apps.json from their GitHub releases, keeps them up to date and
 // starts them. Extra editors can be added without a new launcher build in %APPDATA%\Motion Launcher\apps.json.
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,9 +34,20 @@ function loadApps() {
 // installed version, so it is written again after each update.
 const startMenu = () => join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
 function shortcut(name, target, description = '') {
+  if (process.platform === 'linux' && !smoke && existsSync(target)) return desktopEntry(name, target, description);
   if (process.platform !== 'win32' || smoke || !existsSync(target)) return;
   const file = join(startMenu(), `${name.replace(/[\\/:*?"<>|]/g, '')}.lnk`);
   try { shell.writeShortcutLink(file, existsSync(file) ? 'replace' : 'create', { target, cwd: dirname(target), icon: target, iconIndex: 0, description }); } catch {}
+}
+// On Linux: a .desktop file in ~/.local/share/applications, so the app menu finds it.
+function desktopEntry(name, target, description) {
+  const dir = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'applications');
+  const icon = [join(dirname(target), 'resources', 'app', 'resources', 'icon.png'), join(dirname(target), 'resources', 'app', 'icons', 'launcher.png')].find(existsSync) || '';
+  const q = s => `"${s.replace(/["`$\\]/g, '\\$&')}"`;
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.desktop`), ['[Desktop Entry]', 'Type=Application', `Name=${name}`, `Comment=${description}`, `Exec=${q(target)}`, `Path=${dirname(target)}`, icon && `Icon=${icon}`, 'Terminal=false', 'Categories=AudioVideo;Video;', ''].filter(s => s !== '').join('\n'));
+  } catch {}
 }
 function appShortcut(a) {
   const info = store.installed(a.id);

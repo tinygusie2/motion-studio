@@ -5,15 +5,18 @@ import { packager } from '@electron/packager';
 
 // --mac: a universal (Intel + Apple Silicon) .app; it has to be built on a Mac (see .github/workflows/mac.yml).
 const mac = process.argv.includes('--mac');
+// --linux: an x64 build with a lowercase executable; build it on Linux (see .github/workflows/linux.yml).
+const linux = process.argv.includes('--linux');
 
 const [out] = await packager({
   dir: '.',
   name: 'Motion Studio',
-  platform: mac ? 'darwin' : 'win32',
+  platform: mac ? 'darwin' : linux ? 'linux' : 'win32',
   arch: mac ? 'universal' : 'x64',
   out: 'dist',
   overwrite: true,
-  icon: mac ? 'resources/icon.icns' : 'resources/icon.ico',
+  icon: mac ? 'resources/icon.icns' : linux ? 'resources/icon.png' : 'resources/icon.ico',
+  ...(linux && { executableName: 'motion-studio' }),
   asar: false,
   // Paths are relative to the project, starting with /.
   ignore: [/^\/dist(\/|$)/, /^\/launcher(\/|$)/, /^\/scripts(\/|$)/, /^\/docs(\/|$)/, /^\/test(\/|$)/, /^\/\.git/, /^\/\.claude(\/|$)/]

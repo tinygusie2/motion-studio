@@ -72,7 +72,7 @@ function wavSeconds(file) {
 // Tool locations: settings first, then the RepFlow-promo venv this app grew out of.
 function tools(settings) {
   const legacy = join(homedir(), 'Documents', 'RepFlow-promo');
-  const python = settings.python || [join(legacy, '.tts-venv', 'Scripts', 'python.exe')].find(existsSync) || '';
+  const python = settings.python || [join(legacy, '.tts-venv', 'Scripts', 'python.exe'), join(legacy, '.tts-venv', 'bin', 'python')].find(existsSync) || '';
   const piperVoices = settings.piperVoices || [join(legacy, 'pww', 'vo', 'voices')].find(existsSync) || '';
   return { python, piperVoices, hf: settings.hyperframes || 'hyperframes@0.8.73' };
 }
