@@ -58,7 +58,8 @@ const W = 1400, PPS = 100;
 async function open(t, patch = {}) {
   await fetch(`${url}/api/videos/ui-test`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...spec, ...patch, id: 'ui-test' }) });
   const ctx = await browser.newContext({ viewport: { width: W, height: 900 }, locale: 'nl-NL' });
-  await ctx.addInitScript(pps => { localStorage.setItem('ms-pps', String(pps)); }, PPS);
+  // The media pane (clips, Demo) is a tab next to Add; the tests start on it.
+  await ctx.addInitScript(pps => { localStorage.setItem('ms-pps', String(pps)); localStorage.setItem('ms-lib-pane', 'media'); }, PPS);
   page = await ctx.newPage();
   await page.goto(url);
   await page.locator('.tl-item.k-clips').first().waitFor();
@@ -247,7 +248,15 @@ uiTest('captions from audio: without Whisper the install dialog asks first, and 
   await open(t, { audio: 'talk.wav' });
   await page.getByRole('button', { name: /Uit audio|From audio/ }).click();
   const dlg = page.locator('#dlg-whisper');
-  await dlg.waitFor();
+  if (process.platform === 'win32' && process.arch === 'x64') await dlg.waitFor();
+  else {
+    // Elsewhere Whisper can't install itself: the app says so instead of asking.
+    await page.locator('#toast.err').waitFor();
+    assert.match(await page.locator('#toast').textContent(), /whisper\.cpp/);
+    assert.equal(await dlg.evaluate(d => d.open), false);
+    assert.equal(await page.locator('#dlg-job').evaluate(d => d.open), false, 'no job was started');
+    return;
+  }
   assert.equal(await dlg.locator('input[type=radio]').count(), 2);
   assert.equal(await dlg.locator('input[type=radio]:checked').getAttribute('value'), 'small');
   await dlg.getByRole('button', { name: /Annuleren|Cancel/ }).click();
